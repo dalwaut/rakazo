@@ -1,15 +1,29 @@
+import { spawnSync } from "node:child_process";
+import { mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { RoutineWatchSchema } from "@rakazo/contracts";
 import { describe, expect, it, vi } from "vitest";
+import { ComputerBusyError, provisionComputer } from "./computer-lifecycle.js";
 import type { RoutineWatchTickDeps } from "./routine-watch.js";
 import {
+  checkRoutineWatch,
   compareReading,
   describeEntryChanges,
+  FILES_SCRIPT,
   parseRoutineWatch,
+  resolveWatchPath,
   stableStringify,
   tickRoutineWatch,
   toolResultText,
+  validateRoutineWatch,
   watchFolder,
 } from "./routine-watch.js";
+
+vi.mock("./computer-lifecycle.js", async (original) => ({
+  ...(await original()),
+  provisionComputer: vi.fn(),
+}));
 
 const NOW = new Date("2026-10-16T12:00:00.000Z");
 
@@ -116,6 +130,12 @@ describe("tickRoutineWatch", () => {
     };
     const deps = {
       prisma: {
+        bot: {
+          findUnique: vi.fn(async () => ({
+            id: "bot-1",
+            computer: { id: "computer-1", scope: "team" },
+          })),
+        },
         routine: { updateMany },
         $transaction: vi.fn(async (fn: (client: unknown) => unknown) => fn(tx)),
       },
@@ -123,7 +143,7 @@ describe("tickRoutineWatch", () => {
       jobs: { enqueue: vi.fn(async () => undefined), cancel: vi.fn(async () => undefined) },
       connector: {
         discoverTools: vi.fn(async () => [
-          { name: "brain_changed", route: { connectorId: "installed" } },
+          { name: "brain_changed", readOnly: true, route: { connectorId: "installed" } },
         ]),
         execute: vi.fn(async function* () {
           if (result.error) yield { type: "error", message: result.error };
@@ -172,7 +192,7 @@ describe("tickRoutineWatch", () => {
     expect(messages).toHaveLength(0);
   });
 
-  it("posts 'No changes, routine ended' when loud", async () => {
+  it("posts 'no changes' when loud", async () => {
     const { deps, routine, updateMany, messages } = setup(
       { data: { changes: [] } },
       { loud: true },
@@ -187,8 +207,82 @@ describe("tickRoutineWatch", () => {
     await tickRoutineWatch(deps, routine, target, scheduledAt);
     expect(messages.at(-1)).toMatchObject({
       role: "system",
-      blocks: [{ kind: "meta", text: "Brain check routine: No changes, routine ended" }],
+      blocks: [{ kind: "meta", text: "Brain check routine: no changes" }],
     });
+  });
+
+  it.each([false, undefined])(
+    "refuses a tool with readOnly %s without executing it",
+    async (readOnly) => {
+      const { deps, routine } = setup({ data: "ok" });
+      vi.mocked(deps.connector!.discoverTools).mockResolvedValue([
+        { name: "brain_changed", readOnly, description: "Read changes", inputSchema: {} },
+      ]);
+      await expect(checkRoutineWatch(deps, routine)).rejects.toThrow("can change data");
+      expect(deps.connector!.execute).not.toHaveBeenCalled();
+      await expect(
+        validateRoutineWatch(deps, RoutineWatchSchema.parse(routine.watch), routine),
+      ).rejects.toThrow("can change data");
+    },
+  );
+
+  it.each([false, undefined, true])("checks lazy tool readOnly %s", async (readOnly) => {
+    const { deps, routine } = setup({ data: "ok" });
+    vi.mocked(deps.connector!.discoverTools).mockResolvedValue([]);
+    deps.connector!.resolveCall = vi.fn(async (call) => ({
+      call,
+      tool: { name: call.tool, readOnly, description: "Read changes", inputSchema: {} },
+    }));
+    if (readOnly)
+      await expect(checkRoutineWatch(deps, routine)).resolves.toMatchObject({ changed: false });
+    else await expect(checkRoutineWatch(deps, routine)).rejects.toThrow("can change data");
+    expect(deps.connector!.execute).toHaveBeenCalledTimes(readOnly ? 1 : 0);
+  });
+
+  it.each([{ isError: true, content: [{ type: "text", text: "failed" }] }, { error: "failed" }])(
+    "rejects error result envelopes",
+    async (data) => {
+      const { deps, routine } = setup({ data });
+      await expect(checkRoutineWatch(deps, routine)).rejects.toThrow("failed");
+    },
+  );
+
+  it.each([new ComputerBusyError(), new DOMException("timed out", "TimeoutError")])(
+    "retries temporary provisioning conflicts without losing the baseline",
+    async (error) => {
+      const { deps, routine, updateMany, messages } = setup({});
+      routine.watch = { kind: "files", paths: ["inbox"] } as unknown as typeof routine.watch;
+      vi.mocked(provisionComputer).mockRejectedValueOnce(error);
+      await tickRoutineWatch(deps, routine, target, scheduledAt);
+      expect(updateMany).toHaveBeenCalledWith(
+        expect.objectContaining({ data: { nextRunAt: expect.any(Date) } }),
+      );
+      expect(deps.jobs.enqueue).toHaveBeenCalledOnce();
+      expect(deps.jobs.cancel).not.toHaveBeenCalled();
+      expect(messages).toEqual([]);
+    },
+  );
+
+  it("keeps sub-second modification times in file signatures", async () => {
+    const { deps, routine } = setup({});
+    routine.watch = { kind: "files", paths: ["inbox"] } as unknown as typeof routine.watch;
+    vi.mocked(provisionComputer).mockResolvedValue({
+      id: "computer-1",
+      botId: "bot-1",
+      kind: "fake",
+      providerRef: "fake",
+    });
+    let mtime = "1.123";
+    deps.sandbox = {
+      execute: vi.fn(async function* () {
+        yield { type: "stdout", data: `inbox/note.txt\t3\t${mtime}\n` };
+        yield { type: "exit", code: 0 };
+      }),
+    } as unknown as typeof deps.sandbox;
+    const baseline = await checkRoutineWatch(deps, routine);
+    routine.watchState = baseline.state as typeof routine.watchState;
+    mtime = "1.456";
+    expect((await checkRoutineWatch(deps, routine)).changed).toBe(true);
   });
 
   it("runs with a note of what changed", async () => {
@@ -253,5 +347,58 @@ describe("toolResultText", () => {
   it("keeps plain strings and other data readable", () => {
     expect(toolResultText("plain")).toBe("plain");
     expect(toolResultText({ b: 1, a: 2 })).toBe('{"a":2,"b":1}');
+  });
+});
+
+describe("file watch boundaries", () => {
+  it("allows normalized team paths inside the bot folder", () => {
+    expect(resolveWatchPath("team", "bot-1", "/home/rakazo/bots/bot-1/inbox/../notes")).toBe(
+      "/home/rakazo/bots/bot-1/notes",
+    );
+    expect(resolveWatchPath("team", "bot-1", "notes")).toBe("/home/rakazo/bots/bot-1/notes");
+  });
+  it.each(["/etc", "../bot-2", "/home/rakazo/bots/bot-1/../../shared", "shared/../../other"])(
+    "refuses team escape %s",
+    (path) => {
+      expect(() => resolveWatchPath("team", "bot-1", path)).toThrow("inside the bot's folder");
+    },
+  );
+  it("keeps dedicated computers unrestricted", () => {
+    expect(resolveWatchPath("dedicated", "bot-1", "/etc")).toBe("/etc");
+    expect(resolveWatchPath("dedicated", "bot-1", "../tmp")).toBe("/home/tmp");
+  });
+});
+
+describe("files listing script", () => {
+  it("refuses a symlink that points outside the bot folder before listing", () => {
+    const temp = realpathSync(mkdtempSync(join(tmpdir(), "routine-watch-")));
+    try {
+      const folder = join(temp, "bot");
+      mkdirSync(folder);
+      const outside = join(temp, "outside");
+      mkdirSync(outside);
+      writeFileSync(join(outside, "private.txt"), "fixture");
+      const link = join(folder, "link");
+      symlinkSync(outside, link);
+      for (const path of [link, join(link, "private.txt")]) {
+        const result = spawnSync("sh", ["-c", FILES_SCRIPT, "watch", folder, path], {
+          encoding: "utf8",
+        });
+        expect(result.status).toBe(1);
+        expect(result.stdout).toBe("");
+        expect(result.stderr).toContain("Path escapes the bot folder");
+      }
+    } finally {
+      rmSync(temp, { recursive: true, force: true });
+    }
+  });
+
+  it("keeps an earlier listing failure and its stderr when the last path succeeds", () => {
+    // Simulate a sandbox where one find fails, followed by a successful listing.
+    const script = `find() { if [ "$2" = / ]; then echo denied >&2; return 1; fi; printf 'ok\\t1\\t1.234\\n'; }\n${FILES_SCRIPT}`;
+    const result = spawnSync("sh", ["-c", script, "watch", "", "/", "/."], { encoding: "utf8" });
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain("denied");
+    expect(result.stdout).toContain("1.234");
   });
 });

@@ -286,7 +286,7 @@ msgstr ""
 
 #: src/pages/RoutineEditor.tsx
 msgid "A command's output"
-msgstr ""
+msgstr "कमांड का आउटपुट"
 
 #. placeholder {0}: oauth.verificationUri.replace(/^https:\/\//, "")
 #: src/pages/ModelSettingsOverlay.tsx
@@ -374,11 +374,11 @@ msgstr "जोड़ें"
 
 #: src/pages/RoutineEditor.tsx
 msgid "Add a command to run"
-msgstr ""
+msgstr "चलाने के लिए कमांड जोड़ें"
 
 #: src/pages/RoutineEditor.tsx
 msgid "Add a file or folder to watch"
-msgstr ""
+msgstr "निगरानी के लिए फ़ाइल या फ़ोल्डर जोड़ें"
 
 #: src/components/ApprovalRulesSettings.tsx
 msgid "Add a model in Settings to use this."
@@ -399,7 +399,7 @@ msgstr "एक stdio कमांड दर्ज करें।"
 #: src/pages/RoutineEditor.tsx
 #: src/pages/Shell.tsx
 msgid "Add a trigger to run this routine."
-msgstr ""
+msgstr "इस रूटीन को चलाने के लिए ट्रिगर जोड़ें।"
 
 #: src/pages/McpServersOverlay.tsx
 msgid "Add an HTTPS server URL."
@@ -579,7 +579,7 @@ msgstr "इस प्रोवाइडर के लिए API कुंजी 
 
 #: src/pages/RoutineEditor.tsx
 msgid "An integration tool"
-msgstr ""
+msgstr "एक इंटीग्रेशन टूल"
 
 #: src/components/AskCard.tsx
 msgid "Answer"
@@ -972,7 +972,7 @@ msgstr ""
 
 #: src/pages/RoutineEditor.tsx
 msgid "Check every"
-msgstr ""
+msgstr "जाँच का अंतराल"
 
 #: src/components/SoftwareUpdateSection.tsx
 msgid "Check failed"
@@ -981,7 +981,7 @@ msgstr ""
 #. placeholder {0}: state.detail ?? ""
 #: src/pages/RoutineEditor.tsx
 msgid "Check failed: {0}"
-msgstr ""
+msgstr "जाँच विफल: {0}"
 
 #: src/components/DesktopUpdates.tsx
 #: src/components/SoftwareUpdateSection.tsx
@@ -2357,11 +2357,11 @@ msgstr ""
 
 #: src/pages/RoutineEditor.tsx
 msgid "Files or folders on the computer"
-msgstr ""
+msgstr "कंप्यूटर पर फ़ाइलें या फ़ोल्डर"
 
 #: src/pages/RoutineEditor.tsx
 msgid "Files or folders, one per line"
-msgstr ""
+msgstr "फ़ाइलें या फ़ोल्डर, हर पंक्ति में एक"
 
 #: src/pages/Artifacts.tsx
 msgid "Filter by date"
@@ -2685,12 +2685,12 @@ msgstr "भाषा"
 #. placeholder {0}: new Date(state.checkedAt).toLocaleString()
 #: src/pages/RoutineEditor.tsx
 msgid "Last check {0}: changed"
-msgstr ""
+msgstr "पिछली जाँच {0}: बदलाव हुए"
 
 #. placeholder {0}: new Date(state.checkedAt).toLocaleString()
 #: src/pages/RoutineEditor.tsx
 msgid "Last check {0}: no changes"
-msgstr ""
+msgstr "पिछली जाँच {0}: कोई बदलाव नहीं"
 
 #: src/components/DesktopUpdates.tsx
 msgid "Later"
@@ -3533,7 +3533,7 @@ msgstr "सूची से एक मॉडल चुनें या इस �
 
 #: src/pages/RoutineEditor.tsx
 msgid "Pick a tool to check"
-msgstr ""
+msgstr "जाँचने के लिए टूल चुनें"
 
 #: src/pages/BotContextMenu.tsx
 msgid "Pin"
@@ -3549,7 +3549,7 @@ msgstr "प्लगइन"
 
 #: src/pages/RoutineEditor.tsx
 msgid "Post \"No changes\" in chat"
-msgstr ""
+msgstr "चैट में “कोई बदलाव नहीं” पोस्ट करें"
 
 #: src/pages/RoutineEditor.tsx
 msgid "POST to"
@@ -3757,7 +3757,7 @@ msgstr ""
 
 #: src/pages/RoutineEditor.tsx
 msgid "Remove change trigger"
-msgstr ""
+msgstr "बदलाव ट्रिगर हटाएँ"
 
 #: src/pages/RoutineEditor.tsx
 msgid "Remove Git event"
@@ -4680,19 +4680,19 @@ msgstr "आज"
 
 #: src/pages/RoutineEditor.tsx
 msgid "Tool arguments (JSON)"
-msgstr ""
+msgstr "टूल आर्ग्युमेंट (JSON)"
 
 #: src/pages/RoutineEditor.tsx
 msgid "Tool arguments must be a JSON object"
-msgstr ""
+msgstr "टूल आर्ग्युमेंट JSON ऑब्जेक्ट होने चाहिए"
 
 #: src/pages/RoutineEditor.tsx
 msgid "Tool arguments must be JSON"
-msgstr ""
+msgstr "टूल आर्ग्युमेंट JSON होने चाहिए"
 
 #: src/pages/RoutineEditor.tsx
 msgid "Tool name"
-msgstr ""
+msgstr "टूल का नाम"
 
 #: src/pages/PluginsOverlay.tsx
 msgid "Tool sources"
@@ -4991,7 +4991,7 @@ msgstr "क्या लौटाना है"
 
 #: src/pages/RoutineEditor.tsx
 msgid "What to watch"
-msgstr ""
+msgstr "किसकी निगरानी करें"
 
 #: src/pages/RoutineEditor.tsx
 msgid "When a webhook fires"
@@ -4999,7 +4999,7 @@ msgstr ""
 
 #: src/pages/RoutineEditor.tsx
 msgid "When something changes"
-msgstr ""
+msgstr "कुछ बदलने पर"
 
 #: src/pages/RoutineEditor.tsx
 msgid "When to run"

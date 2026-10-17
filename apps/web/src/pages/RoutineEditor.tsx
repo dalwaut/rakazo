@@ -7,7 +7,7 @@ import type {
   RoutineWatch,
   RoutineWatchInput,
 } from "@rakazo/contracts";
-import { ROUTINE_WATCH_DEFAULT_MINUTES } from "@rakazo/contracts";
+import { ROUTINE_WATCH_DEFAULT_MINUTES, ROUTINE_WATCH_MIN_MINUTES } from "@rakazo/contracts";
 import {
   type CronFreq,
   type CronPreset,
@@ -826,11 +826,17 @@ function WatchTriggerCard({
           <Input
             id={`${id}-every`}
             type="number"
-            min={watch.kind === "tool" ? 5 : 1}
+            min={ROUTINE_WATCH_MIN_MINUTES}
             max={1440}
             value={watch.everyMinutes}
             onChange={(e) =>
-              onChange({ ...watch, everyMinutes: Math.max(1, Number(e.target.value) || 1) })
+              onChange({
+                ...watch,
+                everyMinutes: Math.max(
+                  ROUTINE_WATCH_MIN_MINUTES,
+                  Number(e.target.value) || ROUTINE_WATCH_MIN_MINUTES,
+                ),
+              })
             }
             className="h-8 w-20"
           />

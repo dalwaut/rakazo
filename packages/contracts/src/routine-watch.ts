@@ -8,14 +8,16 @@ import * as z from "zod";
  * - `files`: paths on the bot's computer (relative paths resolve into the
  *   bot's own folder). Names, sizes and modified times are compared.
  * - `command`: a shell command on the bot's computer; its output is the
- *   fingerprint. A non-zero exit is a failed check.
+ *   fingerprint. It runs every interval in the bot's folder, without a model
+ *   or per-run approval, equivalent to the bot running the command itself.
+ *   A non-zero exit is a failed check.
  * - `tool`: a read-only tool from a connected integration, called with fixed
  *   arguments; its result is the fingerprint.
  */
 export const ROUTINE_WATCH_KINDS = ["files", "command", "tool"] as const;
 export const ROUTINE_WATCH_DEFAULT_MINUTES = 15;
-/** Integration checks call someone else's server; keep them from hammering it. */
-export const ROUTINE_WATCH_MIN_TOOL_MINUTES = 5;
+/** Keep unattended checks from hammering computers or connected services. */
+export const ROUTINE_WATCH_MIN_MINUTES = 5;
 
 export const RoutineWatchSchema = z
   .object({
@@ -24,7 +26,12 @@ export const RoutineWatchSchema = z
     command: z.string().trim().min(1).max(2000).optional(),
     tool: z.string().trim().min(1).max(200).optional(),
     args: z.record(z.string(), z.unknown()).optional(),
-    everyMinutes: z.number().int().min(1).max(1440).default(ROUTINE_WATCH_DEFAULT_MINUTES),
+    everyMinutes: z
+      .number()
+      .int()
+      .min(ROUTINE_WATCH_MIN_MINUTES)
+      .max(1440)
+      .default(ROUTINE_WATCH_DEFAULT_MINUTES),
     /** Post "No changes" in chat on every quiet check, not only in history. */
     loud: z.boolean().default(false),
   })
@@ -38,13 +45,6 @@ export const RoutineWatchSchema = z
     if (value.kind === "tool") {
       if (!value.tool) {
         ctx.addIssue({ code: "custom", message: "Pick a tool to check", path: ["tool"] });
-      }
-      if (value.everyMinutes < ROUTINE_WATCH_MIN_TOOL_MINUTES) {
-        ctx.addIssue({
-          code: "custom",
-          message: `Integration checks run at most every ${ROUTINE_WATCH_MIN_TOOL_MINUTES} minutes`,
-          path: ["everyMinutes"],
-        });
       }
     }
   });

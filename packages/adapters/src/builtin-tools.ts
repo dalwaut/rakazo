@@ -122,7 +122,7 @@ const scheduleTimingSpecs = {
   watch: {
     type: "object",
     description:
-      "Run only when something changes, checked without a model every everyMinutes (default 15). kind files: paths on your computer. kind command: a shell command whose output is compared. kind tool: a read-only connected tool and its args. If nothing changed, the routine does not run.",
+      "Run only when something changes, checked without a model every everyMinutes (minimum 5, default 15). kind files: paths on your computer. kind command: a shell command run in your folder every interval without a model or per-run approval, equivalent to running the command yourself; its output is compared. kind tool: a read-only connected tool and its args. If nothing changed, the routine does not run.",
     properties: {
       kind: { type: "string", enum: ["files", "command", "tool"] },
       paths: { type: "array", items: { type: "string" } },

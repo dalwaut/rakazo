@@ -1,4 +1,4 @@
-import type { JobPublisher } from "@rakazo/adapter-kit";
+import type { ConnectorProvider, JobPublisher } from "@rakazo/adapter-kit";
 import { routineJobKey, routineWakeupJob } from "@rakazo/adapter-kit";
 import { RoutineWatchSchema } from "@rakazo/contracts";
 import {
@@ -9,6 +9,8 @@ import {
   ONCE_ROUTINE_CRON,
 } from "@rakazo/core";
 import type { Prisma, PrismaClient, ThreadEvents } from "@rakazo/db";
+
+import { validateRoutineWatch } from "./routine-watch.js";
 
 export { isOneShotRoutineCron, ONCE_ROUTINE_CRON };
 
@@ -195,6 +197,7 @@ function validateRepeatingCron(cron: string): string | null {
 }
 
 export interface ScheduleToolDeps {
+  connector?: ConnectorProvider;
   prisma: PrismaClient;
   events: ThreadEvents;
   jobs: JobPublisher;
@@ -310,6 +313,17 @@ async function createWatchFromTool(
   if (!parsed.success) {
     return { error: parsed.error.issues.map((issue) => issue.message).join("; ") };
   }
+  try {
+    // Match routine editing's owner/space boundary before creating unattended work.
+    const bot = await deps.prisma.bot.findFirst({
+      where: { id: input.botId, spaceId: input.spaceId, userId: input.userId, archivedAt: null },
+      include: { computer: true },
+    });
+    if (!bot) return { error: "Bot not found." };
+    await validateRoutineWatch(deps, parsed.data, input, bot.computer);
+  } catch (error) {
+    return { error: error instanceof Error ? error.message : "Invalid change trigger." };
+  }
   const nextRunAt = new Date(Date.now() + 2_000);
   const row = await deps.prisma.routine.create({
     data: {
@@ -415,4 +429,17 @@ export async function cancelScheduleFromTool(
   await deps.prisma.routine.delete({ where: { id: existing.id } });
   await deps.jobs.cancel(routineJobKey(existing.id));
   return { ok: true as const, routineId: existing.id, name: existing.name };
+}
+
+/** Creating unattended shell work requires explicit approval, including JSON tool input. */
+export function commandWatchFromTool(value: unknown): string | undefined {
+  if (typeof value === "string") {
+    try {
+      value = JSON.parse(value);
+    } catch {
+      return undefined;
+    }
+  }
+  const parsed = RoutineWatchSchema.safeParse(value);
+  return parsed.success && parsed.data.kind === "command" ? parsed.data.command : undefined;
 }

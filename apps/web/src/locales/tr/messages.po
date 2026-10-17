@@ -286,7 +286,7 @@ msgstr ""
 
 #: src/pages/RoutineEditor.tsx
 msgid "A command's output"
-msgstr ""
+msgstr "Bir komutun çıktısı"
 
 #. placeholder {0}: oauth.verificationUri.replace(/^https:\/\//, "")
 #: src/pages/ModelSettingsOverlay.tsx
@@ -374,11 +374,11 @@ msgstr "Ekle"
 
 #: src/pages/RoutineEditor.tsx
 msgid "Add a command to run"
-msgstr ""
+msgstr "Çalıştırılacak bir komut ekleyin"
 
 #: src/pages/RoutineEditor.tsx
 msgid "Add a file or folder to watch"
-msgstr ""
+msgstr "İzlenecek bir dosya veya klasör ekleyin"
 
 #: src/components/ApprovalRulesSettings.tsx
 msgid "Add a model in Settings to use this."
@@ -399,7 +399,7 @@ msgstr "Bir stdio komutu gir."
 #: src/pages/RoutineEditor.tsx
 #: src/pages/Shell.tsx
 msgid "Add a trigger to run this routine."
-msgstr ""
+msgstr "Bu rutini çalıştırmak için bir tetikleyici ekleyin."
 
 #: src/pages/McpServersOverlay.tsx
 msgid "Add an HTTPS server URL."
@@ -579,7 +579,7 @@ msgstr "Bu sağlayıcı için abonelik girişi değil, bir API anahtarı saklan�
 
 #: src/pages/RoutineEditor.tsx
 msgid "An integration tool"
-msgstr ""
+msgstr "Bir entegrasyon aracı"
 
 #: src/components/AskCard.tsx
 msgid "Answer"
@@ -972,7 +972,7 @@ msgstr ""
 
 #: src/pages/RoutineEditor.tsx
 msgid "Check every"
-msgstr ""
+msgstr "Kontrol aralığı"
 
 #: src/components/SoftwareUpdateSection.tsx
 msgid "Check failed"
@@ -981,7 +981,7 @@ msgstr ""
 #. placeholder {0}: state.detail ?? ""
 #: src/pages/RoutineEditor.tsx
 msgid "Check failed: {0}"
-msgstr ""
+msgstr "Kontrol başarısız: {0}"
 
 #: src/components/DesktopUpdates.tsx
 #: src/components/SoftwareUpdateSection.tsx
@@ -2357,11 +2357,11 @@ msgstr ""
 
 #: src/pages/RoutineEditor.tsx
 msgid "Files or folders on the computer"
-msgstr ""
+msgstr "Bilgisayardaki dosya veya klasörler"
 
 #: src/pages/RoutineEditor.tsx
 msgid "Files or folders, one per line"
-msgstr ""
+msgstr "Dosya veya klasörler, her satıra bir tane"
 
 #: src/pages/Artifacts.tsx
 msgid "Filter by date"
@@ -2685,12 +2685,12 @@ msgstr "Dil"
 #. placeholder {0}: new Date(state.checkedAt).toLocaleString()
 #: src/pages/RoutineEditor.tsx
 msgid "Last check {0}: changed"
-msgstr ""
+msgstr "Son kontrol {0}: değişiklik var"
 
 #. placeholder {0}: new Date(state.checkedAt).toLocaleString()
 #: src/pages/RoutineEditor.tsx
 msgid "Last check {0}: no changes"
-msgstr ""
+msgstr "Son kontrol {0}: değişiklik yok"
 
 #: src/components/DesktopUpdates.tsx
 msgid "Later"
@@ -3533,7 +3533,7 @@ msgstr "Listeden bir model seç veya bu uç noktanın sunduğu bir model kimliğ
 
 #: src/pages/RoutineEditor.tsx
 msgid "Pick a tool to check"
-msgstr ""
+msgstr "Kontrol edilecek bir araç seçin"
 
 #: src/pages/BotContextMenu.tsx
 msgid "Pin"
@@ -3549,7 +3549,7 @@ msgstr "Eklenti"
 
 #: src/pages/RoutineEditor.tsx
 msgid "Post \"No changes\" in chat"
-msgstr ""
+msgstr "Sohbete “Değişiklik yok” gönder"
 
 #: src/pages/RoutineEditor.tsx
 msgid "POST to"
@@ -3757,7 +3757,7 @@ msgstr ""
 
 #: src/pages/RoutineEditor.tsx
 msgid "Remove change trigger"
-msgstr ""
+msgstr "Değişiklik tetikleyicisini kaldır"
 
 #: src/pages/RoutineEditor.tsx
 msgid "Remove Git event"
@@ -4680,19 +4680,19 @@ msgstr "Bugün"
 
 #: src/pages/RoutineEditor.tsx
 msgid "Tool arguments (JSON)"
-msgstr ""
+msgstr "Araç bağımsız değişkenleri (JSON)"
 
 #: src/pages/RoutineEditor.tsx
 msgid "Tool arguments must be a JSON object"
-msgstr ""
+msgstr "Araç bağımsız değişkenleri bir JSON nesnesi olmalıdır"
 
 #: src/pages/RoutineEditor.tsx
 msgid "Tool arguments must be JSON"
-msgstr ""
+msgstr "Araç bağımsız değişkenleri JSON olmalıdır"
 
 #: src/pages/RoutineEditor.tsx
 msgid "Tool name"
-msgstr ""
+msgstr "Araç adı"
 
 #: src/pages/PluginsOverlay.tsx
 msgid "Tool sources"
@@ -4991,7 +4991,7 @@ msgstr "Ne döndürülecek"
 
 #: src/pages/RoutineEditor.tsx
 msgid "What to watch"
-msgstr ""
+msgstr "İzlenecek öğe"
 
 #: src/pages/RoutineEditor.tsx
 msgid "When a webhook fires"
@@ -4999,7 +4999,7 @@ msgstr ""
 
 #: src/pages/RoutineEditor.tsx
 msgid "When something changes"
-msgstr ""
+msgstr "Bir şey değiştiğinde"
 
 #: src/pages/RoutineEditor.tsx
 msgid "When to run"

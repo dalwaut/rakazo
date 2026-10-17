@@ -122,6 +122,7 @@ import {
   updateTicket,
   validateConnectedModelChoice,
   validateModelAuthAvailability,
+  validateRoutineWatch,
   validateStoredModelAuth,
   verifyMcpInstall,
 } from "@rakazo/adapters";
@@ -3327,6 +3328,20 @@ export function createRouter(deps: RouterDeps) {
           });
         }
         const bot = await repos.getBot(context.actor, input.botId);
+        if (input.watch) {
+          try {
+            await validateRoutineWatch(
+              {},
+              input.watch,
+              { ...context.actor, botId: bot.id },
+              bot.computer,
+            );
+          } catch (error) {
+            throw new ORPCError("BAD_REQUEST", {
+              message: error instanceof Error ? error.message : "Invalid change trigger.",
+            });
+          }
+        }
         await assertRoutineModel(deps, context.actor, input);
         // Validate every recurring cron even when inactive; @once and webhook-only have no next date.
         let nextRunAt: Date | null = null;
@@ -3420,6 +3435,20 @@ export function createRouter(deps: RouterDeps) {
           await assertRoutineModel(deps, context.actor, { modelProvider, modelId });
         }
         const watch = input.watch === undefined ? parseRoutineWatch(existing.watch) : input.watch;
+        if (input.watch) {
+          try {
+            await validateRoutineWatch(
+              {},
+              input.watch,
+              { ...context.actor, botId: bot.id },
+              bot.computer,
+            );
+          } catch (error) {
+            throw new ORPCError("BAD_REQUEST", {
+              message: error instanceof Error ? error.message : "Invalid change trigger.",
+            });
+          }
+        }
         const watchChanged =
           input.watch !== undefined &&
           stableStringify(input.watch) !== stableStringify(parseRoutineWatch(existing.watch));

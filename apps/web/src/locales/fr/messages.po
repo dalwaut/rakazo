@@ -286,7 +286,7 @@ msgstr "Un peu de tout"
 
 #: src/pages/RoutineEditor.tsx
 msgid "A command's output"
-msgstr ""
+msgstr "La sortie d’une commande"
 
 #. placeholder {0}: oauth.verificationUri.replace(/^https:\/\//, "")
 #: src/pages/ModelSettingsOverlay.tsx
@@ -374,11 +374,11 @@ msgstr "Ajouter"
 
 #: src/pages/RoutineEditor.tsx
 msgid "Add a command to run"
-msgstr ""
+msgstr "Ajoutez une commande à exécuter"
 
 #: src/pages/RoutineEditor.tsx
 msgid "Add a file or folder to watch"
-msgstr ""
+msgstr "Ajoutez un fichier ou dossier à surveiller"
 
 #: src/components/ApprovalRulesSettings.tsx
 msgid "Add a model in Settings to use this."
@@ -399,7 +399,7 @@ msgstr "Ajoutez une commande stdio."
 #: src/pages/RoutineEditor.tsx
 #: src/pages/Shell.tsx
 msgid "Add a trigger to run this routine."
-msgstr ""
+msgstr "Ajoutez un déclencheur pour exécuter cette routine."
 
 #: src/pages/McpServersOverlay.tsx
 msgid "Add an HTTPS server URL."
@@ -579,7 +579,7 @@ msgstr "Une clé API est enregistrée pour ce fournisseur, et non une connexion 
 
 #: src/pages/RoutineEditor.tsx
 msgid "An integration tool"
-msgstr ""
+msgstr "Un outil d’intégration"
 
 #: src/components/AskCard.tsx
 msgid "Answer"
@@ -972,7 +972,7 @@ msgstr ""
 
 #: src/pages/RoutineEditor.tsx
 msgid "Check every"
-msgstr ""
+msgstr "Vérifier toutes les"
 
 #: src/components/SoftwareUpdateSection.tsx
 msgid "Check failed"
@@ -981,7 +981,7 @@ msgstr "Échec de la vérification"
 #. placeholder {0}: state.detail ?? ""
 #: src/pages/RoutineEditor.tsx
 msgid "Check failed: {0}"
-msgstr ""
+msgstr "Échec de la vérification : {0}"
 
 #: src/components/DesktopUpdates.tsx
 #: src/components/SoftwareUpdateSection.tsx
@@ -2357,11 +2357,11 @@ msgstr ""
 
 #: src/pages/RoutineEditor.tsx
 msgid "Files or folders on the computer"
-msgstr ""
+msgstr "Fichiers ou dossiers de l’ordinateur"
 
 #: src/pages/RoutineEditor.tsx
 msgid "Files or folders, one per line"
-msgstr ""
+msgstr "Fichiers ou dossiers, un par ligne"
 
 #: src/pages/Artifacts.tsx
 msgid "Filter by date"
@@ -2685,12 +2685,12 @@ msgstr "Langue"
 #. placeholder {0}: new Date(state.checkedAt).toLocaleString()
 #: src/pages/RoutineEditor.tsx
 msgid "Last check {0}: changed"
-msgstr ""
+msgstr "Dernière vérification {0} : modifications"
 
 #. placeholder {0}: new Date(state.checkedAt).toLocaleString()
 #: src/pages/RoutineEditor.tsx
 msgid "Last check {0}: no changes"
-msgstr ""
+msgstr "Dernière vérification {0} : aucun changement"
 
 #: src/components/DesktopUpdates.tsx
 msgid "Later"
@@ -3533,7 +3533,7 @@ msgstr "Choisissez un modèle dans la liste ou saisissez un identifiant de modè
 
 #: src/pages/RoutineEditor.tsx
 msgid "Pick a tool to check"
-msgstr ""
+msgstr "Choisissez un outil à vérifier"
 
 #: src/pages/BotContextMenu.tsx
 msgid "Pin"
@@ -3549,7 +3549,7 @@ msgstr "Plugin"
 
 #: src/pages/RoutineEditor.tsx
 msgid "Post \"No changes\" in chat"
-msgstr ""
+msgstr "Publier « Aucun changement » dans le chat"
 
 #: src/pages/RoutineEditor.tsx
 msgid "POST to"
@@ -3757,7 +3757,7 @@ msgstr ""
 
 #: src/pages/RoutineEditor.tsx
 msgid "Remove change trigger"
-msgstr ""
+msgstr "Supprimer le déclencheur de changement"
 
 #: src/pages/RoutineEditor.tsx
 msgid "Remove Git event"
@@ -4680,19 +4680,19 @@ msgstr "Aujourd'hui"
 
 #: src/pages/RoutineEditor.tsx
 msgid "Tool arguments (JSON)"
-msgstr ""
+msgstr "Arguments de l’outil (JSON)"
 
 #: src/pages/RoutineEditor.tsx
 msgid "Tool arguments must be a JSON object"
-msgstr ""
+msgstr "Les arguments doivent être un objet JSON"
 
 #: src/pages/RoutineEditor.tsx
 msgid "Tool arguments must be JSON"
-msgstr ""
+msgstr "Les arguments doivent être au format JSON"
 
 #: src/pages/RoutineEditor.tsx
 msgid "Tool name"
-msgstr ""
+msgstr "Nom de l’outil"
 
 #: src/pages/PluginsOverlay.tsx
 msgid "Tool sources"
@@ -4991,7 +4991,7 @@ msgstr "Que retourner"
 
 #: src/pages/RoutineEditor.tsx
 msgid "What to watch"
-msgstr ""
+msgstr "Élément à surveiller"
 
 #: src/pages/RoutineEditor.tsx
 msgid "When a webhook fires"
@@ -4999,7 +4999,7 @@ msgstr "Lorsqu'un webhook se déclenche"
 
 #: src/pages/RoutineEditor.tsx
 msgid "When something changes"
-msgstr ""
+msgstr "Quand quelque chose change"
 
 #: src/pages/RoutineEditor.tsx
 msgid "When to run"

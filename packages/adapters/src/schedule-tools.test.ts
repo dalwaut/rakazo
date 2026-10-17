@@ -2,6 +2,7 @@ import { ONCE_ROUTINE_CRON } from "@rakazo/core";
 import { describe, expect, it, vi } from "vitest";
 import {
   cancelScheduleFromTool,
+  commandWatchFromTool,
   compactScheduleInput,
   createScheduleFromTool,
   filterBuiltinToolsForRun,
@@ -210,7 +211,7 @@ describe("schedule tool persistence", () => {
       nextRunAt: args.data.nextRunAt,
     }));
     const deps = {
-      prisma: { routine: { create } },
+      prisma: { bot: { findFirst: vi.fn(async () => ({ computer: null })) }, routine: { create } },
       events: { append },
       jobs: { enqueue, cancel: vi.fn(async () => undefined) },
     } as unknown as Parameters<typeof createScheduleFromTool>[0];
@@ -483,7 +484,10 @@ describe("schedule_create with a watch", () => {
       create,
       enqueue,
       deps: {
-        prisma: { routine: { create } },
+        prisma: {
+          bot: { findFirst: vi.fn(async () => ({ computer: null })) },
+          routine: { create },
+        },
         events: { append: vi.fn(async () => undefined) },
         jobs: { enqueue, cancel: vi.fn(async () => undefined) },
       } as unknown as Parameters<typeof createScheduleFromTool>[0],
@@ -515,6 +519,48 @@ describe("schedule_create with a watch", () => {
     expect(enqueue).toHaveBeenCalledTimes(1);
   });
 
+  it("rejects a team path escape before persisting", async () => {
+    const { deps: d, create } = deps();
+    vi.mocked(d.prisma.bot.findFirst).mockResolvedValue({ computer: { scope: "team" } } as never);
+    const result = await createScheduleFromTool(d, {
+      ...base,
+      schedule: { watch: { kind: "files", paths: ["/etc"] } },
+    });
+    expect(result).toMatchObject({ error: expect.stringContaining("inside the bot's folder") });
+    expect(create).not.toHaveBeenCalled();
+  });
+
+  it("rejects a write tool before persisting", async () => {
+    const { deps: d, create } = deps();
+    d.connector = {
+      discoverTools: vi.fn(async () => [
+        { name: "send", readOnly: false, description: "Send", inputSchema: {} },
+      ]),
+    } as unknown as typeof d.connector;
+    const result = await createScheduleFromTool(d, {
+      ...base,
+      schedule: { watch: { kind: "tool", tool: "send" } },
+    });
+    expect(result).toMatchObject({ error: expect.stringContaining("can change data") });
+    expect(create).not.toHaveBeenCalled();
+  });
+
+  it("rejects a caller outside the bot owner boundary", async () => {
+    const { deps: d, create } = deps();
+    vi.mocked(d.prisma.bot.findFirst).mockResolvedValue(null);
+    const result = await createScheduleFromTool(d, {
+      ...base,
+      schedule: { watch: { kind: "command", command: "echo changed" } },
+    });
+    expect(result).toMatchObject({ error: "Bot not found." });
+    expect(d.prisma.bot.findFirst).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { id: base.botId, spaceId: base.spaceId, userId: base.userId, archivedAt: null },
+      }),
+    );
+    expect(create).not.toHaveBeenCalled();
+  });
+
   it("accepts the watch sent as JSON text", async () => {
     const { deps: d, create } = deps();
     const result = await createScheduleFromTool(d, {
@@ -537,5 +583,14 @@ describe("schedule_create with a watch", () => {
       await createScheduleFromTool(d, { ...base, schedule: { watch: { kind: "files" } } }),
     ).toHaveProperty("error");
     expect(create).not.toHaveBeenCalled();
+  });
+});
+
+describe("command watch approval classification", () => {
+  it("recognizes object and JSON command watches only", () => {
+    const watch = { kind: "command", command: "echo changed" };
+    expect(commandWatchFromTool(watch)).toBe("echo changed");
+    expect(commandWatchFromTool(JSON.stringify(watch))).toBe("echo changed");
+    expect(commandWatchFromTool({ kind: "files", paths: ["inbox"] })).toBeUndefined();
   });
 });

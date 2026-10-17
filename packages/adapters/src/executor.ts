@@ -330,6 +330,7 @@ import {
 import { withRuntimeCleanup } from "./runtime-stream.js";
 import {
   cancelScheduleFromTool,
+  commandWatchFromTool,
   compactScheduleInput,
   createScheduleFromTool,
   filterBuiltinToolsForRun,
@@ -4578,11 +4579,16 @@ export function createRunExecutor(deps: ExecutorDeps) {
             viaConnector,
             declaredReadOnly,
           );
+          // This schedules unattended shell execution; require a person to approve
+          // the command once, rather than letting an allow rule or reviewer schedule it.
+          const commandWatch =
+            name === "schedule_create" && commandWatchFromTool(args.watch) !== undefined;
           const requiresApprovalByDefault =
+            commandWatch ||
             requiresUnattendedApproval ||
             toolRequiresApproval(name, viaConnector, declaredReadOnly);
           const requiresMandatoryApproval =
-            requiresUnattendedApproval || toolRequiresExplicitApproval(name);
+            commandWatch || requiresUnattendedApproval || toolRequiresExplicitApproval(name);
           const connectorKind = connectorKindFromToolName(
             name,
             connectedPlugins.map((plugin) => plugin.provider),
@@ -5773,6 +5779,11 @@ export function createRunExecutor(deps: ExecutorDeps) {
             );
           }
           if (name === "schedule_create") {
+            const command = commandWatchFromTool(args.watch);
+            const refusal =
+              command === undefined ? undefined : protectedComputerLifecycleRefusal(command);
+            if (graphical && refusal)
+              return finish({ error: desktopProtectionGuardMessage(refusal) });
             const created = await createScheduleFromTool(deps, {
               spaceId: run.spaceId,
               botId: bot.id,

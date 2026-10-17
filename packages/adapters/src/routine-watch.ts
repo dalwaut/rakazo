@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { posix } from "node:path";
 import type {
   AdapterContext,
   AgentHomeStore,
@@ -16,8 +17,8 @@ import {
   parseComputerMode,
 } from "@rakazo/db";
 import { scheduleComputerSleep } from "./computer-idle.js";
-import { provisionComputer } from "./computer-lifecycle.js";
-import { resolveBotWorkspacePath, teamBotWorkspaceDirectory } from "./computer-support.js";
+import { ComputerBusyError, provisionComputer } from "./computer-lifecycle.js";
+import { teamBotWorkspaceDirectory } from "./computer-support.js";
 
 /**
  * The checker behind a routine's "when something changes" trigger. It never
@@ -54,6 +55,8 @@ export type RoutineWatchTarget = {
 
 /** Thrown when a check cannot be completed; the routine is paused and the bot says why. */
 export class RoutineWatchError extends Error {}
+
+class RetryRoutineWatchError extends Error {}
 
 export type RoutineWatchOutcome = {
   state: RoutineWatchState;
@@ -194,10 +197,28 @@ function context(routine: RoutineWatchTarget): AdapterContext {
 // Lists every file under each path as "path<TAB>size<TAB>mtime". A path that
 // does not exist is reported rather than read as "no files", which would make
 // a deleted folder look unchanged forever.
-const FILES_SCRIPT = `for p in "$@"; do
-  if [ -e "$p" ]; then find "$p" -type f -printf '%p\\t%s\\t%T@\\n' 2>/dev/null
+export const FILES_SCRIPT = `root="$1"; shift
+status=0
+for p in "$@"; do
+  if [ -e "$p" ]; then
+    if [ -n "$root" ]; then
+      actual=$(realpath -- "$p") || exit 1
+      case "$actual" in "$root"|"$root"/*) ;; *) echo "Path escapes the bot folder" >&2; exit 1 ;; esac
+    fi
+    find -P "$p" -type f -printf '%p\\t%s\\t%T@\\n' || status=1
   else printf 'MISSING\\t%s\\n' "$p"; fi
-done`;
+done
+exit "$status"`;
+
+/** Team file checks stay in this bot's folder, including absolute paths. */
+export function resolveWatchPath(mode: ComputerMode, botId: string, path: string): string {
+  const folder = watchFolder(mode, botId);
+  const resolved = posix.resolve(folder, path);
+  if (mode === "team" && resolved !== folder && !resolved.startsWith(`${folder}/`)) {
+    throw new RoutineWatchError("The watched path must stay inside the bot's folder.");
+  }
+  return resolved;
+}
 
 /** Where a bot's relative paths and commands start. */
 export function watchFolder(mode: ComputerMode, botId: string): string {
@@ -219,16 +240,26 @@ async function readComputer(
   const ctx = context(routine);
   let computer: Awaited<ReturnType<typeof provisionComputer>>;
   try {
-    computer = await provisionComputer(deps, bot.computer.id, ctx);
+    computer = await provisionComputer(deps, bot.computer.id, {
+      ...ctx,
+      signal: AbortSignal.timeout(5 * 60_000),
+    });
   } catch (error) {
+    if (
+      error instanceof ComputerBusyError ||
+      (error instanceof Error && ["AbortError", "TimeoutError"].includes(error.name))
+    ) {
+      throw new RetryRoutineWatchError();
+    }
     throw new RoutineWatchError(`Could not start the bot's computer: ${errorText(error)}`);
   }
   scheduleComputerSleep(deps.jobs, bot.computer.id);
   const botFolder = watchFolder(mode, bot.id);
-  const resolve = (path: string) =>
-    path.startsWith("/") ? path : `${WORKSPACE}/${resolveBotWorkspacePath(mode, bot.id, path)}`;
+  ctx.signal = AbortSignal.timeout(CHECK_TIMEOUT_MS);
 
   if (watch.kind === "command") {
+    // Runs this shell command on the bot's computer every interval, in its folder,
+    // without a model or per-run approval: equivalent to the bot running it itself.
     const result = await run(deps, computer, ctx, ["sh", "-lc", watch.command ?? ""], botFolder);
     if (result.code !== 0) {
       throw new RoutineWatchError(
@@ -238,12 +269,12 @@ async function readComputer(
     return { fingerprint: sha256(result.stdout), detail: clip(result.stdout) || null };
   }
 
-  const paths = (watch.paths ?? []).map(resolve);
+  const paths = (watch.paths ?? []).map((path) => resolveWatchPath(mode, bot.id, path));
   const result = await run(
     deps,
     computer,
     ctx,
-    ["sh", "-c", FILES_SCRIPT, "watch", ...paths],
+    ["sh", "-c", FILES_SCRIPT, "watch", mode === "team" ? botFolder : "", ...paths],
     WORKSPACE,
   );
   if (result.code !== 0) {
@@ -257,7 +288,7 @@ async function readComputer(
     if (!line) continue;
     const [first, second, third] = line.split("\t");
     if (first === "MISSING") missing.push(second ?? "");
-    else if (first) entries[first] = `${second}:${Math.floor(Number(third))}`;
+    else if (first) entries[first] = `${second}:${third}`;
   }
   if (missing.length) {
     throw new RoutineWatchError(`Nothing exists at ${missing.join(", ")}.`);
@@ -313,20 +344,26 @@ async function readTool(
   const call = { tool: toolName, args: watch.args ?? {}, executionId: ctx.operationId };
   const tool = tools.find((candidate) => candidate.name === toolName);
   const resolved = tool
-    ? { ...call, route: tool.route }
-    : ((await connector.resolveCall?.(call, ctx).catch(() => undefined))?.call ?? null);
+    ? { call: { ...call, route: tool.route }, tool }
+    : await connector.resolveCall?.(call, ctx).catch(() => undefined);
   if (!resolved) {
     throw new RoutineWatchError(`No connected integration has a tool named ${toolName}.`);
   }
+  assertWatchToolReadOnly(toolName, resolved.tool.readOnly);
   let data: unknown;
   let failure: string | null = null;
   try {
-    for await (const event of connector.execute(resolved, ctx)) {
+    for await (const event of connector.execute(resolved.call, ctx)) {
       if (event.type === "result") data = event.data;
       else if (event.type === "error") failure = event.message;
     }
   } catch (error) {
     failure = errorText(error);
+  }
+  if (data && typeof data === "object") {
+    const result = data as { isError?: boolean; error?: unknown };
+    if (result.isError === true || result.error != null)
+      failure = toolResultText(result.error ?? data);
   }
   if (failure) throw new RoutineWatchError(`${toolName} failed: ${clip(failure)}`);
   // The fingerprint covers the whole result; only the note the bot reads is unwrapped.
@@ -389,6 +426,15 @@ export async function tickRoutineWatch(
     if (!watch) throw new RoutineWatchError("The change trigger's settings are not valid.");
     outcome = await checkRoutineWatch(deps, routine, now);
   } catch (error) {
+    if (error instanceof RetryRoutineWatchError && watch) {
+      const nextRunAt = nextRoutineWatchAt(watch, now);
+      const claimed = await deps.prisma.routine.updateMany({
+        where: { id: routine.id, active: true, nextRunAt: scheduledAt },
+        data: { nextRunAt },
+      });
+      if (claimed.count === 1) await deps.jobs.enqueue(routineWakeupJob(routine.id, nextRunAt));
+      return { run: false };
+    }
     const reason = error instanceof Error ? error.message : String(error);
     const paused = await deps.prisma.routine.updateMany({
       where: { id: routine.id, active: true, nextRunAt: scheduledAt },
@@ -440,7 +486,7 @@ export async function tickRoutineWatch(
       text:
         outcome.state.outcome === "baseline"
           ? `${routine.name} routine: watching for changes`
-          : `${routine.name} routine: No changes, routine ended`,
+          : `${routine.name} routine: no changes`,
     });
   }
   await deps.jobs.enqueue(routineWakeupJob(routine.id, nextRunAt));
@@ -483,4 +529,40 @@ export async function postRoutineWatchMessage(
   } catch {
     // Best effort: the routine's state is already saved.
   }
+}
+
+export function assertWatchToolReadOnly(tool: string, readOnly: boolean | undefined): void {
+  if (readOnly !== true) {
+    throw new RoutineWatchError(
+      `${tool} can change data, so a change trigger can't run it. Pick a read-only tool.`,
+    );
+  }
+}
+
+/** Validate without executing a tool or provisioning a computer. */
+export async function validateRoutineWatch(
+  deps: { connector?: ConnectorProvider },
+  watch: RoutineWatch,
+  target: { spaceId: string; userId: string; botId: string },
+  computer?: { scope: string } | null,
+): Promise<void> {
+  if (watch.kind === "files" && computer) {
+    for (const path of watch.paths ?? [])
+      resolveWatchPath(parseComputerMode(computer.scope), target.botId, path);
+  }
+  // The API composition root has a registry, not the run's authorized connector.
+  // Without that provider, tool metadata must be checked by readTool at runtime.
+  if (watch.kind !== "tool" || !deps.connector) return;
+  const ctx = context({ ...target, id: "validate", watch, watchState: null });
+  const name = watch.tool ?? "";
+  const tool =
+    (await deps.connector.discoverTools(ctx)).find((tool) => tool.name === name) ??
+    (
+      await deps.connector.resolveCall?.(
+        { tool: name, args: watch.args ?? {}, executionId: ctx.operationId },
+        ctx,
+      )
+    )?.tool;
+  if (!tool) throw new RoutineWatchError(`No connected integration has a tool named ${name}.`);
+  assertWatchToolReadOnly(name, tool.readOnly);
 }
