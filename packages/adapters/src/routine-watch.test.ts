@@ -276,6 +276,20 @@ describe("tickRoutineWatch", () => {
     },
   );
 
+  it("applies approval rules to the real tool behind a lazy catalog call", async () => {
+    const { deps, routine } = setup({ data: "ok" });
+    vi.mocked(deps.connector!.discoverTools).mockResolvedValue([]);
+    deps.connector!.resolveCall = vi.fn(async (call) => ({
+      call,
+      tool: { name: "actual_read", readOnly: true, description: "Read", inputSchema: {} },
+    }));
+    vi.mocked(deps.prisma.actionApprovalRule.findMany).mockResolvedValue([
+      { effect: "require_approval", matchKind: "tool", matchValue: "actual_read" },
+    ] as never);
+    await expect(checkRoutineWatch(deps, routine)).rejects.toThrow("needs approval");
+    expect(deps.connector!.execute).not.toHaveBeenCalled();
+  });
+
   it("keeps sub-second modification times in file signatures", async () => {
     const { deps, routine } = setup({});
     routine.watch = { kind: "files", paths: ["inbox"] } as unknown as typeof routine.watch;

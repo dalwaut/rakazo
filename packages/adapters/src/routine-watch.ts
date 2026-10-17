@@ -471,9 +471,9 @@ async function readTool(
     throw new RoutineWatchError(`No connected integration has a tool named ${toolName}.`);
   }
   const refusal = watchToolRefusal({
-    toolName,
+    toolName: resolved.tool.name,
     connectorKind: connectorKindFromToolName(
-      toolName,
+      resolved.tool.name,
       ctx.connectedConnections?.map((row) => row.externalId),
     ),
     readOnly: resolved.tool.readOnly,
