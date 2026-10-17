@@ -810,3 +810,27 @@ it("loads authorized connection context for discovery, creation validation and c
   await expect(checkRoutineWatch(deps, routine)).rejects.toThrow("needs approval");
   expect(execute).toHaveBeenCalledOnce();
 });
+
+describe("overlapping tracked identities", () => {
+  it("retains parent values when a nested object has the same ID", () => {
+    const result = (modifiedTime: string) => ({
+      id: "1",
+      modifiedTime,
+      owner: { id: "1", name: "Owner" },
+    });
+    expect(readItems(result("1"), ["id", "modifiedTime"]).fingerprint).not.toBe(
+      readItems(result("2"), ["id", "modifiedTime"]).fingerprint,
+    );
+  });
+  it("keeps all duplicate-ID values and ignores their ordering", () => {
+    const list = [
+      { id: "1", modifiedTime: "1" },
+      { id: "1", modifiedTime: "2" },
+    ];
+    const before = readItems(list, ["id", "modifiedTime"]);
+    expect(readItems([...list].reverse(), ["id", "modifiedTime"]).fingerprint).toBe(
+      before.fingerprint,
+    );
+    expect(readItems([list[0]], ["id", "modifiedTime"]).fingerprint).not.toBe(before.fingerprint);
+  });
+});

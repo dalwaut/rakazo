@@ -205,7 +205,8 @@ function itemFields(signature: string | undefined): string | undefined {
  */
 export function readItems(data: unknown, track: readonly string[]): Reading {
   const [identity, ...fields] = track;
-  const entries: Record<string, string> = Object.create(null);
+  const items = new Map<string, { fields: string[]; titles: string[] }>();
+  let count = 0;
   const visit = (value: unknown) => {
     if (Array.isArray(value)) {
       for (const item of value) visit(item);
@@ -215,14 +216,24 @@ export function readItems(data: unknown, track: readonly string[]): Reading {
     const record = value as Record<string, unknown>;
     const id = identity ? record[identity] : undefined;
     if (typeof id === "string" || typeof id === "number") {
+      const key = String(id);
+      const item = items.get(key) ?? { fields: [], titles: [] };
+      item.fields.push(stableStringify(fields.map((field) => record[field] ?? null)));
       const titleField = TITLE_FIELDS.find((field) => typeof record[field] === "string");
-      const title = titleField ? String(record[titleField]).slice(0, 120) : null;
-      entries[String(id)] =
-        `${ITEM_SIGNATURE}${stableStringify({ fields: fields.map((field) => record[field] ?? null), title })}`;
+      if (titleField) item.titles.push(String(record[titleField]).slice(0, 120));
+      items.set(key, item);
+      count++;
     }
     for (const child of Object.values(record)) visit(child);
   };
   visit(resultJson(data));
+  // IDs can repeat in nested results. Preserve every object's values, independent of order.
+  const entries = Object.fromEntries(
+    [...items].map(([id, item]) => [
+      id,
+      `${ITEM_SIGNATURE}${stableStringify({ fields: item.fields.sort(), title: item.titles.sort()[0] ?? null })}`,
+    ]),
+  );
   const fingerprint = sha256(
     stableStringify(
       Object.fromEntries(
@@ -230,7 +241,6 @@ export function readItems(data: unknown, track: readonly string[]): Reading {
       ),
     ),
   );
-  const count = Object.keys(entries).length;
   return count > MAX_TRACKED_ENTRIES
     ? { fingerprint, detail: `${count} watched items; something among them changed.` }
     : { fingerprint, entries, detail: null };
