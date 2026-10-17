@@ -102,7 +102,7 @@ import {
   stableJsonValue,
   toolEffectIdempotencyKey,
 } from "@rakazo/core/node/approval-effect-key";
-import type { McpServer, Prisma, PrismaClient, ThreadEvents } from "@rakazo/db";
+import type { McpServer, PrismaClient, ThreadEvents } from "@rakazo/db";
 import {
   appendEventInTransaction,
   createSpaceForMember,
@@ -114,6 +114,7 @@ import {
   InvalidSpaceNameError,
   isTooManyDatabaseConnections,
   loadRunHistoryMessages,
+  Prisma,
   parseComputerMode,
   readHistory,
   recordUsage,
@@ -315,6 +316,7 @@ import { actorMayUsePrivateEndpoint } from "./private-endpoint.js";
 import type { RemoteTransportDependencies } from "./remote-mcp.js";
 import { assertSafeRemoteUrl } from "./remote-mcp.js";
 import { loadReplyContext, messageToAgentHistoryText } from "./reply-context.js";
+import { tickRoutineWatch } from "./routine-watch.js";
 import {
   commitConsumedRunSecret,
   normalizeSecretAskPurpose,
@@ -3150,23 +3152,38 @@ export function createRunExecutor(deps: ExecutorDeps) {
           })
         : null;
       const thread = targetThread ?? bot.thread;
+      // A change trigger checks first, without a model; only news becomes a run.
+      const watchTick =
+        routine.watch == null
+          ? null
+          : await tickRoutineWatch(
+              deps,
+              routine,
+              { threadId: thread.id, botId: bot.id },
+              scheduledAt,
+            );
+      if (watchTick && !watchTick.run) return;
       // A schedule with no valid parseable cron among its crons (e.g. a
       // legacy row accepted before cron validation was added) fires the
       // already-due run once, then nextRunAt stays null and the routine
       // pauses rather than crash-looping the wakeup job.
-      const nextRunAt = isOneShotRoutineCrons(routine.crons)
-        ? null
-        : nextCronDateAcross(
-            routine.crons,
-            new Date(Math.max(Date.now(), scheduledAt.getTime())),
-            routine.timezone,
-          );
+      const nextRunAt = watchTick?.run
+        ? watchTick.nextRunAt
+        : isOneShotRoutineCrons(routine.crons)
+          ? null
+          : nextCronDateAcross(
+              routine.crons,
+              new Date(Math.max(Date.now(), scheduledAt.getTime())),
+              routine.timezone,
+            );
       const previousLastRunAt = routine.lastRunAt;
       const skillRecords = await listAgentSkillRecords(deps.prisma, {
         spaceId: routine.spaceId,
         userId: routine.userId,
       });
-      const routinePrompt = expandSkillReferencesInPrompt(routine.prompt, skillRecords);
+      const routinePrompt =
+        expandSkillReferencesInPrompt(routine.prompt, skillRecords) +
+        (watchTick?.run ? watchTick.note : "");
       const claimed = await deps.prisma.$transaction(async (tx) => {
         const updated = await tx.routine.updateMany({
           where: {
@@ -3179,6 +3196,7 @@ export function createRunExecutor(deps: ExecutorDeps) {
             lastRunAt: new Date(),
             nextRunAt,
             ...(nextRunAt ? {} : { active: false }),
+            ...(watchTick?.run ? { watchState: watchTick.state } : {}),
           },
         });
         if (updated.count !== 1) return null;
@@ -3235,6 +3253,10 @@ export function createRunExecutor(deps: ExecutorDeps) {
               nextRunAt: scheduledAt,
               active: true,
               lastRunAt: previousLastRunAt,
+              // Put the old fingerprint back too, or the retry would see no change.
+              ...(watchTick?.run
+                ? { watchState: (routine.watchState as Prisma.InputJsonValue) ?? Prisma.DbNull }
+                : {}),
             },
           });
         });
@@ -5766,6 +5788,7 @@ export function createRunExecutor(deps: ExecutorDeps) {
                 runAt: args.runAt,
                 delayMinutes: args.delayMinutes,
                 delaySeconds: args.delaySeconds,
+                watch: args.watch,
               }),
             });
             return finish(created);

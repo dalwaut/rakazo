@@ -401,3 +401,36 @@ test("interval schedule only offers amounts the unit can run", async ({ page }, 
   await expect(amount.locator("option[value='30']")).toHaveCount(1);
   await expect(amount.locator("option[value='45']")).toHaveCount(0);
 });
+
+test("a routine can run when something it watches changes", async ({ page }, testInfo) => {
+  const stamp = Date.now();
+  await signup(page, `routine-watch-${stamp}@rakazo.test`, "password12", "Routine Watch");
+  await completeOnboarding(page);
+  const botId = activeBotId(page);
+
+  await page.getByTitle("Agent computer").click();
+  await page.getByRole("button", { name: "Create Routine" }).click();
+  await page.locator("label:has-text('Name') input").fill("Inbox watch");
+  await page.locator("label:has-text('Instruction') textarea").fill("Summarize what arrived");
+  await page.getByRole("button", { name: "Add trigger" }).click();
+  await page.getByRole("menuitem", { name: "When something changes" }).click();
+
+  const card = page.getByTestId("routine-watch-card");
+  await expect(card.getByRole("combobox", { name: "What to watch" })).toHaveValue("files");
+  await card.getByRole("textbox", { name: "Files or folders, one per line" }).fill("inbox/");
+  // A watch replaces schedules, so the schedule menu is unavailable while one exists.
+  await page.getByRole("button", { name: "Add trigger" }).click();
+  await expect(page.getByRole("menuitem", { name: "On a schedule" })).toBeDisabled();
+  await page.keyboard.press("Escape");
+  await captureScreenshot(page, testInfo, "routine-watch-trigger");
+
+  expect(await saveAndReturn(page, "routines/create")).toMatchObject({
+    crons: [],
+    watch: { kind: "files", paths: ["inbox/"], everyMinutes: 15, loud: false },
+  });
+  await expect(page.getByRole("button", { name: /Inbox watch/ })).toContainText(
+    "When something changes",
+  );
+  const [routine] = await rpc<Routine[]>(page, "routines/list", { botId });
+  expect(routine?.watch).toMatchObject({ kind: "files", paths: ["inbox/"] });
+});

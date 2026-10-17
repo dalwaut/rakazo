@@ -284,6 +284,10 @@ msgstr "@{0}"
 msgid "A bit of everything"
 msgstr ""
 
+#: src/pages/RoutineEditor.tsx
+msgid "A command's output"
+msgstr ""
+
 #. placeholder {0}: oauth.verificationUri.replace(/^https:\/\//, "")
 #: src/pages/ModelSettingsOverlay.tsx
 #: src/pages/Onboarding.tsx
@@ -368,20 +372,20 @@ msgstr "Etkinlik"
 msgid "Add"
 msgstr "Ekle"
 
+#: src/pages/RoutineEditor.tsx
+msgid "Add a command to run"
+msgstr ""
+
+#: src/pages/RoutineEditor.tsx
+msgid "Add a file or folder to watch"
+msgstr ""
+
 #: src/components/ApprovalRulesSettings.tsx
 msgid "Add a model in Settings to use this."
 msgstr ""
 
 #: src/pages/Shell.tsx
 msgid "Add a run time for this one-shot."
-msgstr ""
-
-#: src/pages/Shell.tsx
-msgid "Add a schedule, webhook, GitHub, or message trigger"
-msgstr ""
-
-#: src/pages/RoutineEditor.tsx
-msgid "Add a schedule, webhook, GitHub, or message trigger to run this routine."
 msgstr ""
 
 #: src/pages/McpServersOverlay.tsx
@@ -391,6 +395,11 @@ msgstr "Bir sunucu adı gir."
 #: src/pages/McpServersOverlay.tsx
 msgid "Add a stdio command."
 msgstr "Bir stdio komutu gir."
+
+#: src/pages/RoutineEditor.tsx
+#: src/pages/Shell.tsx
+msgid "Add a trigger to run this routine."
+msgstr ""
 
 #: src/pages/McpServersOverlay.tsx
 msgid "Add an HTTPS server URL."
@@ -567,6 +576,10 @@ msgstr "Her zaman izinli"
 #: src/lib/model-connection-preflight.ts
 msgid "An API key is stored for this provider, not a subscription sign-in."
 msgstr "Bu sağlayıcı için abonelik girişi değil, bir API anahtarı saklanıyor."
+
+#: src/pages/RoutineEditor.tsx
+msgid "An integration tool"
+msgstr ""
 
 #: src/components/AskCard.tsx
 msgid "Answer"
@@ -957,8 +970,17 @@ msgstr "Sohbet Ayarları"
 msgid "Check again"
 msgstr ""
 
+#: src/pages/RoutineEditor.tsx
+msgid "Check every"
+msgstr ""
+
 #: src/components/SoftwareUpdateSection.tsx
 msgid "Check failed"
+msgstr ""
+
+#. placeholder {0}: state.detail ?? ""
+#: src/pages/RoutineEditor.tsx
+msgid "Check failed: {0}"
 msgstr ""
 
 #: src/components/DesktopUpdates.tsx
@@ -1148,6 +1170,7 @@ msgid "Coming soon"
 msgstr ""
 
 #: src/pages/McpServersOverlay.tsx
+#: src/pages/RoutineEditor.tsx
 msgid "Command"
 msgstr "Komut"
 
@@ -2332,6 +2355,14 @@ msgstr "Dosya {0} yükleme sınırını aşıyor."
 msgid "Files"
 msgstr ""
 
+#: src/pages/RoutineEditor.tsx
+msgid "Files or folders on the computer"
+msgstr ""
+
+#: src/pages/RoutineEditor.tsx
+msgid "Files or folders, one per line"
+msgstr ""
+
 #: src/pages/Artifacts.tsx
 msgid "Filter by date"
 msgstr ""
@@ -2651,6 +2682,16 @@ msgstr "Bilgi"
 msgid "Language"
 msgstr "Dil"
 
+#. placeholder {0}: new Date(state.checkedAt).toLocaleString()
+#: src/pages/RoutineEditor.tsx
+msgid "Last check {0}: changed"
+msgstr ""
+
+#. placeholder {0}: new Date(state.checkedAt).toLocaleString()
+#: src/pages/RoutineEditor.tsx
+msgid "Last check {0}: no changes"
+msgstr ""
+
 #: src/components/DesktopUpdates.tsx
 msgid "Later"
 msgstr ""
@@ -2959,6 +3000,7 @@ msgstr ""
 msgid "minute"
 msgstr "dakika"
 
+#: src/pages/RoutineEditor.tsx
 #: src/pages/RoutineSchedule.tsx
 msgid "minutes"
 msgstr "dakika"
@@ -3489,6 +3531,10 @@ msgstr "Katalogdan bir model seç."
 msgid "Pick a model from the list or enter a model id served by this endpoint."
 msgstr "Listeden bir model seç veya bu uç noktanın sunduğu bir model kimliği gir."
 
+#: src/pages/RoutineEditor.tsx
+msgid "Pick a tool to check"
+msgstr ""
+
 #: src/pages/BotContextMenu.tsx
 msgid "Pin"
 msgstr "Sabitle"
@@ -3500,6 +3546,10 @@ msgstr "Çalınıyor…"
 #: src/pages/KnowledgeSection.tsx
 msgid "Plugin"
 msgstr "Eklenti"
+
+#: src/pages/RoutineEditor.tsx
+msgid "Post \"No changes\" in chat"
+msgstr ""
 
 #: src/pages/RoutineEditor.tsx
 msgid "POST to"
@@ -3703,6 +3753,10 @@ msgstr "{full} modelini kaldır"
 
 #: src/pages/shell/bot-credentials.tsx
 msgid "Remove {secretName}? This bot will no longer be able to use it."
+msgstr ""
+
+#: src/pages/RoutineEditor.tsx
+msgid "Remove change trigger"
 msgstr ""
 
 #: src/pages/RoutineEditor.tsx
@@ -4624,6 +4678,22 @@ msgstr "Kime:"
 msgid "Today"
 msgstr "Bugün"
 
+#: src/pages/RoutineEditor.tsx
+msgid "Tool arguments (JSON)"
+msgstr ""
+
+#: src/pages/RoutineEditor.tsx
+msgid "Tool arguments must be a JSON object"
+msgstr ""
+
+#: src/pages/RoutineEditor.tsx
+msgid "Tool arguments must be JSON"
+msgstr ""
+
+#: src/pages/RoutineEditor.tsx
+msgid "Tool name"
+msgstr ""
+
 #: src/pages/PluginsOverlay.tsx
 msgid "Tool sources"
 msgstr "Araç kaynakları"
@@ -4920,7 +4990,15 @@ msgid "What to return"
 msgstr "Ne döndürülecek"
 
 #: src/pages/RoutineEditor.tsx
+msgid "What to watch"
+msgstr ""
+
+#: src/pages/RoutineEditor.tsx
 msgid "When a webhook fires"
+msgstr ""
+
+#: src/pages/RoutineEditor.tsx
+msgid "When something changes"
 msgstr ""
 
 #: src/pages/RoutineEditor.tsx

@@ -91,6 +91,7 @@ const scheduleTimingNames = [
   "runAt",
   "delayMinutes",
   "delaySeconds",
+  "watch",
 ] as const;
 
 /**
@@ -118,6 +119,24 @@ const scheduleTimingSpecs = {
     type: "number",
     description: "Seconds from now for a one-shot schedule (may be under one minute).",
   },
+  watch: {
+    type: "object",
+    description:
+      "Run only when something changes, checked without a model every everyMinutes (default 15). kind files: paths on your computer. kind command: a shell command whose output is compared. kind tool: a read-only connected tool and its args. If nothing changed, the routine does not run.",
+    properties: {
+      kind: { type: "string", enum: ["files", "command", "tool"] },
+      paths: { type: "array", items: { type: "string" } },
+      command: { type: "string" },
+      tool: { type: "string" },
+      args: { type: "object" },
+      everyMinutes: { type: "number" },
+      loud: {
+        type: "boolean",
+        description: "Also post 'No changes' in chat on quiet checks.",
+      },
+    },
+    required: ["kind"],
+  },
 };
 
 function scheduleCreateBranch(active: readonly (keyof typeof scheduleTimingSpecs)[]) {
@@ -142,6 +161,7 @@ const scheduleCreateInputSchema = {
     scheduleCreateBranch(["runAt"]),
     scheduleCreateBranch(["delayMinutes"]),
     scheduleCreateBranch(["delaySeconds"]),
+    scheduleCreateBranch(["watch"]),
   ],
 };
 

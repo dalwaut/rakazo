@@ -275,6 +275,7 @@ import {
   RoutineListHeader,
   RoutineListRow,
   routineNeedsOneShotArm,
+  watchFromDraft,
 } from "./RoutineEditor";
 import type { SettingsSection } from "./SettingsOverlay";
 import { SpaceSearchResults } from "./SpaceSearch";
@@ -4142,11 +4143,20 @@ export function ShellPage() {
                     !routineDraft.schedules.length &&
                     !routineDraft.webhookEnabled &&
                     !routineDraft.githubEnabled &&
-                    !routineDraft.messageProvider
+                    !routineDraft.messageProvider &&
+                    !routineDraft.watch
                   ) {
-                    setRoutineError(t`Add a schedule, webhook, GitHub, or message trigger`);
+                    setRoutineError(t`Add a trigger to run this routine.`);
                     return;
                   }
+                  const watchResult = routineDraft.watch
+                    ? watchFromDraft(routineDraft.watch)
+                    : null;
+                  if (watchResult && "error" in watchResult) {
+                    setRoutineError(watchResult.error);
+                    return;
+                  }
+                  const watch = watchResult?.watch ?? null;
                   const saveRequest = ++routineSaveRequest.current;
                   routineSavePending.current = true;
                   setSavingRoutine(true);
@@ -4195,6 +4205,7 @@ export function ShellPage() {
                         webhookEnabled: routineDraft.webhookEnabled,
                         githubEnabled: routineDraft.githubEnabled,
                         messageProvider: routineDraft.messageProvider,
+                        watch,
                         ...(routineModel.modelProvider !== targetRoutine.modelProvider ||
                         routineModel.modelId !== targetRoutine.modelId ||
                         routineModel.thinkingLevel !== targetRoutine.thinkingLevel
@@ -4214,6 +4225,7 @@ export function ShellPage() {
                         webhookEnabled: routineDraft.webhookEnabled,
                         githubEnabled: routineDraft.githubEnabled,
                         messageProvider: routineDraft.messageProvider,
+                        watch,
                         ...routineModel,
                       });
                     }

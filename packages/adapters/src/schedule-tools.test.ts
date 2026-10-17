@@ -471,3 +471,71 @@ describe("schedule tool persistence", () => {
     );
   });
 });
+
+describe("schedule_create with a watch", () => {
+  function deps() {
+    const create = vi.fn(async (args: { data: Record<string, unknown> }) => ({
+      id: "routine-w",
+      ...args.data,
+    }));
+    const enqueue = vi.fn(async () => undefined);
+    return {
+      create,
+      enqueue,
+      deps: {
+        prisma: { routine: { create } },
+        events: { append: vi.fn(async () => undefined) },
+        jobs: { enqueue, cancel: vi.fn(async () => undefined) },
+      } as unknown as Parameters<typeof createScheduleFromTool>[0],
+    };
+  }
+  const base = {
+    spaceId: "space-1",
+    botId: "bot-1",
+    userId: "user-1",
+    threadId: "thread-1",
+    name: "Brain check",
+    prompt: "Summarize what changed",
+  };
+
+  it("creates an active routine with no schedule that checks right away", async () => {
+    const { deps: d, create, enqueue } = deps();
+    const result = await createScheduleFromTool(d, {
+      ...base,
+      schedule: { watch: { kind: "tool", tool: "brain_changed", args: { limit: 1 } } },
+    });
+    expect(result).toMatchObject({ ok: true, routineId: "routine-w" });
+    expect(create).toHaveBeenCalledWith({
+      data: expect.objectContaining({
+        crons: [],
+        active: true,
+        watch: expect.objectContaining({ kind: "tool", everyMinutes: 15, loud: false }),
+      }),
+    });
+    expect(enqueue).toHaveBeenCalledTimes(1);
+  });
+
+  it("accepts the watch sent as JSON text", async () => {
+    const { deps: d, create } = deps();
+    const result = await createScheduleFromTool(d, {
+      ...base,
+      schedule: { watch: '{"kind":"files","paths":["inbox/"]}' },
+    });
+    expect(result).toMatchObject({ ok: true });
+    expect(create).toHaveBeenCalledTimes(1);
+  });
+
+  it("refuses a watch combined with a schedule, or an invalid watch", async () => {
+    const { deps: d, create } = deps();
+    expect(
+      await createScheduleFromTool(d, {
+        ...base,
+        schedule: { cron: "0 9 * * *", watch: { kind: "files", paths: ["inbox"] } },
+      }),
+    ).toHaveProperty("error");
+    expect(
+      await createScheduleFromTool(d, { ...base, schedule: { watch: { kind: "files" } } }),
+    ).toHaveProperty("error");
+    expect(create).not.toHaveBeenCalled();
+  });
+});
