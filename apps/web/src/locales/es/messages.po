@@ -2346,6 +2346,14 @@ msgstr "Falló."
 msgid "Failure handling"
 msgstr "Manejo de fallos"
 
+#: src/pages/RoutineEditor.tsx
+msgid "Fields that mark a change"
+msgstr "Campos que indican un cambio"
+
+#: src/pages/RoutineEditor.tsx
+msgid "Fields to compare, e.g. id, modifiedTime (optional)"
+msgstr "Campos para comparar, p. ej. id, modifiedTime (opcional)"
+
 #. placeholder {0}: attachmentSizeLabel(getMaxUploadSizeBytes())
 #: src/components/computer/FilesApp.tsx
 msgid "File exceeds the {0} upload limit."

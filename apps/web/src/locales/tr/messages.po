@@ -2346,6 +2346,14 @@ msgstr "Başarısız oldu."
 msgid "Failure handling"
 msgstr "Hata yönetimi"
 
+#: src/pages/RoutineEditor.tsx
+msgid "Fields that mark a change"
+msgstr "Değişikliği belirten alanlar"
+
+#: src/pages/RoutineEditor.tsx
+msgid "Fields to compare, e.g. id, modifiedTime (optional)"
+msgstr "Karşılaştırılacak alanlar, ör. id, modifiedTime (isteğe bağlı)"
+
 #. placeholder {0}: attachmentSizeLabel(getMaxUploadSizeBytes())
 #: src/components/computer/FilesApp.tsx
 msgid "File exceeds the {0} upload limit."

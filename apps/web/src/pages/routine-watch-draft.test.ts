@@ -27,6 +27,19 @@ describe("watchFromDraft", () => {
     expect(watchFromDraft({ ...draft, args: "{nope" })).toHaveProperty("error");
   });
 
+  it("reads tracked fields as a comma list, only for a command or tool", () => {
+    const tool = {
+      ...emptyWatchDraft(),
+      kind: "tool" as const,
+      tool: "list_tasks",
+      track: " id, date_updated ,",
+    };
+    expect(watchFromDraft(tool)).toMatchObject({ watch: { track: ["id", "date_updated"] } });
+    expect(watchFromDraft({ ...tool, track: "" })).not.toHaveProperty("watch.track");
+    const files = { ...emptyWatchDraft(), paths: "inbox/", track: "id" };
+    expect(watchFromDraft(files)).not.toHaveProperty("watch.track");
+  });
+
   it("refuses an empty watch", () => {
     expect(watchFromDraft(emptyWatchDraft())).toHaveProperty("error");
     expect(watchFromDraft({ ...emptyWatchDraft(), kind: "command" })).toHaveProperty("error");

@@ -12,6 +12,7 @@ import {
   describeEntryChanges,
   FILES_SCRIPT,
   parseRoutineWatch,
+  readItems,
   resolveWatchPath,
   stableStringify,
   tickRoutineWatch,
@@ -24,6 +25,7 @@ vi.mock("./computer-lifecycle.js", async (original) => ({
   ...(await original()),
   provisionComputer: vi.fn(),
 }));
+vi.mock("./computer-idle.js", () => ({ scheduleComputerSleep: vi.fn() }));
 
 const NOW = new Date("2026-10-16T12:00:00.000Z");
 
@@ -43,6 +45,15 @@ describe("RoutineWatchSchema", () => {
     const fast = { kind: "tool", tool: "brain_changed", everyMinutes: 1 };
     expect(RoutineWatchSchema.safeParse(fast).success).toBe(false);
     expect(RoutineWatchSchema.safeParse({ ...fast, everyMinutes: 5 }).success).toBe(true);
+  });
+
+  it("tracks items by up to five fields, identity first", () => {
+    const tool = { kind: "tool", tool: "list_tasks", track: ["id", "date_updated"] };
+    expect(RoutineWatchSchema.parse(tool).track).toEqual(["id", "date_updated"]);
+    expect(RoutineWatchSchema.safeParse({ ...tool, track: [] }).success).toBe(false);
+    expect(
+      RoutineWatchSchema.safeParse({ kind: "files", paths: ["a"], track: ["id"] }).success,
+    ).toBe(false);
   });
 
   it("reads an invalid stored watch as none rather than throwing", () => {
@@ -130,13 +141,14 @@ describe("tickRoutineWatch", () => {
     };
     const deps = {
       prisma: {
+        routine: { updateMany },
+        actionApprovalRule: { findMany: vi.fn(async () => []) },
         bot: {
           findUnique: vi.fn(async () => ({
             id: "bot-1",
-            computer: { id: "computer-1", scope: "team" },
+            computer: { id: "computer-1", scope: "team", kind: "vm" },
           })),
         },
-        routine: { updateMany },
         $transaction: vi.fn(async (fn: (client: unknown) => unknown) => fn(tx)),
       },
       events: { notify: vi.fn(async () => undefined) },
@@ -313,6 +325,172 @@ describe("tickRoutineWatch", () => {
   });
 });
 
+describe("tool results", () => {
+  it("treats an MCP error result as a failed check, not a reading", async () => {
+    const deps = {
+      prisma: { actionApprovalRule: { findMany: vi.fn(async () => []) } },
+      connector: {
+        discoverTools: vi.fn(async () => [
+          { name: "brain_changed", readOnly: true, route: { connectorId: "installed" } },
+        ]),
+        execute: vi.fn(async function* () {
+          yield {
+            type: "result",
+            data: { content: [{ type: "text", text: "limit must be a number" }], isError: true },
+          };
+        }),
+      },
+    } as unknown as RoutineWatchTickDeps;
+    const routine = {
+      id: "r",
+      spaceId: "s",
+      userId: "u",
+      botId: "b",
+      watch: { kind: "tool", tool: "brain_changed", args: {} },
+      watchState: null,
+    };
+    await expect(checkRoutineWatch(deps, routine)).rejects.toThrow(/limit must be a number/);
+  });
+});
+
+describe("tickRoutineWatch on a computer", () => {
+  const scheduledAt = new Date(Date.now() - 1_000);
+  const target = { threadId: "thread-1", botId: "bot-1" };
+
+  function setupComputer(
+    watch: Record<string, unknown>,
+    exec: { stdout?: string; stderr?: string; code?: number } = {},
+  ) {
+    const updateMany = vi.fn(async () => ({ count: 1 }));
+    const messages: unknown[] = [];
+    const tx = {
+      thread: { update: vi.fn(async () => ({ nextMessageSeq: 1, nextEventSeq: 1 })) },
+      message: {
+        create: vi.fn(async ({ data }: { data: unknown }) => {
+          messages.push(data);
+          return { id: "m1", ...(data as object) };
+        }),
+      },
+      event: { create: vi.fn(async () => ({ seq: 1 })) },
+    };
+    const execute = vi.fn(async function* () {
+      if (exec.stdout) yield { type: "stdout", data: exec.stdout };
+      if (exec.stderr) yield { type: "stderr", data: exec.stderr };
+      yield { type: "exit", code: exec.code ?? 0 };
+    });
+    const deps = {
+      prisma: {
+        routine: { updateMany },
+        bot: {
+          findUnique: vi.fn(async () => ({
+            id: "bot-1",
+            computer: { id: "computer-1", scope: "team", kind: "vm" },
+          })),
+        },
+        $transaction: vi.fn(async (fn: (client: unknown) => unknown) => fn(tx)),
+      },
+      sandbox: { execute, describe: () => ({ capabilities: { graphical: true } }) },
+      events: { notify: vi.fn(async () => undefined) },
+      jobs: { enqueue: vi.fn(async () => undefined), cancel: vi.fn(async () => undefined) },
+      commandRefusal: (command: string) =>
+        command.includes("pkill") ? "protected command pkill" : undefined,
+    } as unknown as RoutineWatchTickDeps;
+    const routine = {
+      id: "routine-1",
+      spaceId: "space-1",
+      userId: "user-1",
+      botId: "bot-1",
+      name: "Inbox watch",
+      watch,
+      watchState: { checkedAt: "x", outcome: "unchanged", fingerprint: "old", detail: null },
+    };
+    return { deps, routine, updateMany, messages, execute };
+  }
+
+  it("retries in a minute without pausing when the computer is busy", async () => {
+    vi.mocked(provisionComputer).mockRejectedValueOnce(new ComputerBusyError());
+    const { deps, routine, updateMany, messages } = setupComputer({
+      kind: "files",
+      paths: ["inbox"],
+    });
+    expect(await tickRoutineWatch(deps, routine, target, scheduledAt)).toEqual({ run: false });
+    const data = (updateMany.mock.calls[0] as unknown as [{ data: Record<string, unknown> }])[0]
+      .data;
+    expect(data).not.toHaveProperty("active");
+    expect(data).not.toHaveProperty("watchState");
+    expect((data.nextRunAt as Date).getTime()).toBeLessThan(Date.now() + 2 * 60_000);
+    expect(deps.jobs.enqueue).toHaveBeenCalledOnce();
+    expect(messages).toHaveLength(0);
+  });
+
+  it("refuses a command the desktop-protection guard refuses, without running it", async () => {
+    vi.mocked(provisionComputer).mockResolvedValueOnce({
+      id: "computer-1",
+      botId: "bot-1",
+      kind: "fake",
+      providerRef: "fake",
+    });
+    const { deps, routine, updateMany, execute } = setupComputer({
+      kind: "command",
+      command: "pkill chrome; ls",
+    });
+    await tickRoutineWatch(deps, routine, target, scheduledAt);
+    expect(execute).not.toHaveBeenCalled();
+    expect(updateMany).toHaveBeenCalledWith(
+      expect.objectContaining({ data: expect.objectContaining({ active: false }) }),
+    );
+  });
+
+  it("fails rather than saving a partial listing when one path cannot be listed", async () => {
+    vi.mocked(provisionComputer).mockResolvedValueOnce({
+      id: "computer-1",
+      botId: "bot-1",
+      kind: "fake",
+      providerRef: "fake",
+    });
+    const { deps, routine, updateMany } = setupComputer(
+      { kind: "files", paths: ["a", "b"] },
+      {
+        stdout: "/home/rakazo/bots/bot-1/b/x.txt\t1\t5.25\n",
+        stderr: "find: a: Permission denied",
+        code: 1,
+      },
+    );
+    await tickRoutineWatch(deps, routine, target, scheduledAt);
+    expect(updateMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          active: false,
+          watchState: expect.objectContaining({
+            detail: expect.stringContaining("Permission denied"),
+          }),
+        }),
+      }),
+    );
+  });
+
+  it("keeps sub-second modification times", async () => {
+    vi.mocked(provisionComputer).mockResolvedValueOnce({
+      id: "computer-1",
+      botId: "bot-1",
+      kind: "fake",
+      providerRef: "fake",
+    });
+    const { deps, routine, updateMany } = setupComputer(
+      { kind: "files", paths: ["a"] },
+      { stdout: "/home/rakazo/bots/bot-1/a/x.txt\t1\t5.25\n" },
+    );
+    routine.watchState = {
+      checkedAt: "x",
+      outcome: "unchanged",
+      fingerprint: null,
+      detail: null,
+    } as never;
+    await tickRoutineWatch(deps, routine, target, scheduledAt);
+    expect(JSON.stringify(updateMany.mock.calls[0])).toContain("1:5.25");
+  });
+});
+
 describe("watchFolder", () => {
   // A team computer refuses "." as a bot path, which failed every files watch live.
   it("is the bot's own folder on a team computer and the workspace on a private one", () => {
@@ -400,5 +578,123 @@ describe("files listing script", () => {
     expect(result.status).toBe(1);
     expect(result.stderr).toContain("denied");
     expect(result.stdout).toContain("1.234");
+  });
+});
+
+describe("readItems", () => {
+  const inbox = (messages: unknown[]) => ({
+    content: [{ type: "text", text: JSON.stringify({ fetchedAt: Date.now(), messages }) }],
+  });
+
+  it("ignores everything outside the tracked fields", () => {
+    const first = readItems(inbox([{ id: "m1", subject: "Invoice", snippet: "a" }]), ["id"]);
+    const again = readItems(inbox([{ id: "m1", subject: "Invoice", snippet: "b" }]), ["id"]);
+    expect(first.fingerprint).toBe(again.fingerprint);
+  });
+
+  it("names new, updated and gone items by their title", () => {
+    const before = readItems(
+      [
+        { id: "t1", name: "Write rate card", date_updated: "1" },
+        { id: "t2", name: "Call printer", date_updated: "1" },
+      ],
+      ["id", "date_updated"],
+    );
+    const after = readItems(
+      [
+        { id: "t1", name: "Write rate card", date_updated: "2" },
+        { id: "t3", name: "Book venue", date_updated: "1" },
+      ],
+      ["id", "date_updated"],
+    );
+    const previous = {
+      checkedAt: "x",
+      outcome: "unchanged" as const,
+      fingerprint: before.fingerprint,
+      entries: before.entries,
+      detail: null,
+    };
+    expect(compareReading(previous, after, NOW).state.detail).toBe(
+      "New: Book venue\nUpdated: Write rate card\nGone: Call printer",
+    );
+  });
+
+  it("finds items nested anywhere in the result", () => {
+    const reading = readItems({ data: { files: [{ id: "f1", name: "Rates.pdf" }] } }, ["id"]);
+    expect(Object.keys(reading.entries ?? {})).toEqual(["f1"]);
+  });
+
+  it("treats an empty list as no items, not a failure", () => {
+    expect(readItems(inbox([]), ["id"]).entries).toEqual({});
+  });
+});
+
+describe("watch tool guard", () => {
+  function setupTool(
+    tool: { name: string; readOnly?: boolean },
+    args: Record<string, unknown>,
+    rules: unknown[] = [],
+  ) {
+    const execute = vi.fn(async function* () {
+      yield { type: "result", data: [] };
+    });
+    const deps = {
+      prisma: { actionApprovalRule: { findMany: vi.fn(async () => rules) } },
+      connector: {
+        discoverTools: vi.fn(async () => [{ ...tool, route: { connectorId: "installed" } }]),
+        execute,
+      },
+    } as unknown as RoutineWatchTickDeps;
+    const routine = {
+      id: "r",
+      spaceId: "s",
+      userId: "u",
+      botId: "b",
+      watch: { kind: "tool", tool: tool.name, args },
+      watchState: null,
+    };
+    return { deps, routine, execute };
+  }
+
+  it("refuses a tool that changes things, without calling it", async () => {
+    const { deps, routine, execute } = setupTool({ name: "send_email" }, {});
+    await expect(checkRoutineWatch(deps, routine)).rejects.toThrow(/can change data/);
+    expect(execute).not.toHaveBeenCalled();
+  });
+
+  it("refuses a write action on a tool that takes one", async () => {
+    const { deps, routine, execute } = setupTool({ name: "clickbot_tasks" }, { action: "delete" });
+    await expect(checkRoutineWatch(deps, routine)).rejects.toThrow(/can change data/);
+    expect(execute).not.toHaveBeenCalled();
+  });
+
+  it("refuses a tool that does not say it only reads, like brain_propose", async () => {
+    const { deps, routine, execute } = setupTool({ name: "brain_propose" }, {});
+    await expect(checkRoutineWatch(deps, routine)).rejects.toThrow(/can change data/);
+    expect(execute).not.toHaveBeenCalled();
+  });
+
+  it("refuses a read this space's rules ask approval for", async () => {
+    const { deps, routine, execute } = setupTool({ name: "brain_search", readOnly: true }, {}, [
+      { effect: "require_approval", matchKind: "tool", matchValue: "brain_search" },
+    ]);
+    await expect(checkRoutineWatch(deps, routine)).rejects.toThrow(/approval/);
+    expect(execute).not.toHaveBeenCalled();
+  });
+
+  it("refuses a tool its integration declares as a write", async () => {
+    const { deps, routine } = setupTool({ name: "brain_changed", readOnly: false }, {});
+    await expect(checkRoutineWatch(deps, routine)).rejects.toThrow(/can change data/);
+  });
+
+  it("allows reads, including tools whose name does not say", async () => {
+    for (const [name, args] of [
+      ["brain_changed", {}],
+      ["clickbot_tasks", { action: "list" }],
+      ["search_threads", { query: "invoice" }],
+    ] as const) {
+      const { deps, routine } = setupTool({ name, readOnly: true }, args);
+      await expect(checkRoutineWatch(deps, routine)).resolves.toMatchObject({ changed: false });
+    }
   });
 });

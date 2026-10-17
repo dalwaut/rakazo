@@ -10,6 +10,8 @@ import type {
 import { routineJobKey, routineWakeupJob } from "@rakazo/adapter-kit";
 import type { RoutineWatch, RoutineWatchState } from "@rakazo/contracts";
 import { RoutineWatchSchema, RoutineWatchStateSchema } from "@rakazo/contracts";
+import type { ActionApprovalRule } from "@rakazo/core";
+import { watchToolRefusal } from "@rakazo/core";
 import type { ComputerMode, PrismaClient, ThreadEvents } from "@rakazo/db";
 import {
   appendEventInTransaction,
@@ -29,6 +31,10 @@ import { teamBotWorkspaceDirectory } from "./computer-support.js";
 /** Every sandbox resolves the computer's workspace, `bots/` and `shared/`, from here. */
 const WORKSPACE = "/home/rakazo";
 const CHECK_TIMEOUT_MS = 60_000;
+/** Starting a stopped computer can take longer than a check; it gets its own budget. */
+const PROVISION_TIMEOUT_MS = 5 * 60_000;
+/** A busy or still-booting computer is tried again this soon, not counted as a failure. */
+const RETRY_AFTER_MS = 60_000;
 /** Above this, a files watch keeps only the fingerprint and reports a count. */
 const MAX_TRACKED_ENTRIES = 2_000;
 const MAX_DETAIL = 1_500;
@@ -42,6 +48,8 @@ export type RoutineWatchDeps = {
   events: ThreadEvents;
   dataDir?: string;
   connector?: ConnectorProvider;
+  /** The shell tool's desktop-protection guard: why a command is refused on a graphical computer. */
+  commandRefusal?: (command: string) => string | undefined;
 };
 
 export type RoutineWatchTarget = {
@@ -56,7 +64,8 @@ export type RoutineWatchTarget = {
 /** Thrown when a check cannot be completed; the routine is paused and the bot says why. */
 export class RoutineWatchError extends Error {}
 
-class RetryRoutineWatchError extends Error {}
+/** Thrown when a check cannot run yet for a passing reason; it is retried shortly, not paused. */
+export class RoutineWatchRetry extends Error {}
 
 export type RoutineWatchOutcome = {
   state: RoutineWatchState;
@@ -139,25 +148,88 @@ export function describeEntryChanges(
   before: Record<string, string>,
   after: Record<string, string>,
 ): string {
+  const items = Object.keys(after).some((key) => after[key]?.startsWith(ITEM_SIGNATURE));
+  // Files are named by path; tracked items by the title saved in their signature.
+  const name = (key: string, signature: string | undefined) =>
+    items ? (itemTitle(signature) ?? key) : key;
   const added: string[] = [];
   const edited: string[] = [];
   const removed: string[] = [];
-  for (const [path, signature] of Object.entries(after)) {
-    if (!(path in before)) added.push(path);
-    else if (before[path] !== signature) edited.push(path);
+  for (const [key, signature] of Object.entries(after)) {
+    if (!(key in before)) added.push(name(key, signature));
+    else if (before[key] !== signature) edited.push(name(key, signature));
   }
-  for (const path of Object.keys(before)) if (!(path in after)) removed.push(path);
+  for (const key of Object.keys(before)) if (!(key in after)) removed.push(name(key, before[key]));
   const lines: string[] = [];
-  const list = (label: string, paths: string[]) => {
-    if (!paths.length) return;
-    const shown = paths.sort().slice(0, MAX_LISTED);
-    const more = paths.length - shown.length;
+  const list = (label: string, names: string[]) => {
+    if (!names.length) return;
+    const shown = names.sort().slice(0, MAX_LISTED);
+    const more = names.length - shown.length;
     lines.push(`${label}: ${shown.join(", ")}${more > 0 ? ` (and ${more} more)` : ""}`);
   };
   list("New", added);
-  list("Edited", edited);
-  list("Removed", removed);
-  return lines.join("\n") || "The watched files changed.";
+  list(items ? "Updated" : "Edited", edited);
+  list(items ? "Gone" : "Removed", removed);
+  return lines.join("\n") || (items ? "The watched items changed." : "The watched files changed.");
+}
+
+/** Marks an item signature, so a note can name items by title rather than identity. */
+const ITEM_SIGNATURE = "item:";
+const TITLE_FIELDS = ["name", "title", "subject", "summary", "filename", "snippet"];
+
+function itemTitle(signature: string | undefined): string | null {
+  if (!signature?.startsWith(ITEM_SIGNATURE)) return null;
+  try {
+    const { title } = JSON.parse(signature.slice(ITEM_SIGNATURE.length)) as { title?: unknown };
+    return typeof title === "string" && title ? title : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * The items in a JSON result, compared by the tracked fields only. Every object
+ * anywhere in the result that carries the first field is an item; that field
+ * is its identity, and the rest decide whether it was updated.
+ */
+export function readItems(data: unknown, track: readonly string[]): Reading {
+  const [identity, ...fields] = track;
+  const entries: Record<string, string> = {};
+  const visit = (value: unknown) => {
+    if (Object.keys(entries).length >= MAX_TRACKED_ENTRIES) return;
+    if (Array.isArray(value)) {
+      for (const item of value) visit(item);
+      return;
+    }
+    if (!value || typeof value !== "object") return;
+    const record = value as Record<string, unknown>;
+    const id = identity ? record[identity] : undefined;
+    if (typeof id === "string" || typeof id === "number") {
+      const titleField = TITLE_FIELDS.find((field) => typeof record[field] === "string");
+      const title = titleField ? String(record[titleField]).slice(0, 120) : null;
+      entries[String(id)] =
+        `${ITEM_SIGNATURE}${stableStringify({ fields: fields.map((field) => record[field] ?? null), title })}`;
+      return;
+    }
+    for (const child of Object.values(record)) visit(child);
+  };
+  visit(resultJson(data));
+  return { fingerprint: sha256(stableStringify(entries)), entries, detail: null };
+}
+
+/** A result as JSON: the parsed text of an MCP or text result, or the data itself. */
+function resultJson(data: unknown): unknown {
+  const text = typeof data === "string" || isMcpEnvelope(data) ? toolResultText(data) : null;
+  if (text === null) return data;
+  try {
+    return JSON.parse(text);
+  } catch {
+    throw new RoutineWatchError("The result is not JSON, so its tracked fields cannot be read.");
+  }
+}
+
+function isMcpEnvelope(data: unknown): boolean {
+  return Array.isArray((data as { content?: unknown } | null)?.content);
 }
 
 function sha256(value: string): string {
@@ -237,23 +309,34 @@ async function readComputer(
   });
   if (!bot?.computer) throw new RoutineWatchError("This bot has no computer to check.");
   const mode = parseComputerMode(bot.computer.scope);
+  if (watch.kind === "command") {
+    const graphical =
+      bot.computer.kind !== "desktop" && deps.sandbox.describe().capabilities.graphical;
+    const refusal = graphical ? deps.commandRefusal?.(watch.command ?? "") : undefined;
+    if (refusal) {
+      throw new RoutineWatchError(
+        `The check command is refused by the desktop-protection guard: ${refusal}.`,
+      );
+    }
+  }
   const ctx = context(routine);
   let computer: Awaited<ReturnType<typeof provisionComputer>>;
   try {
     computer = await provisionComputer(deps, bot.computer.id, {
       ...ctx,
-      signal: AbortSignal.timeout(5 * 60_000),
+      signal: AbortSignal.timeout(PROVISION_TIMEOUT_MS),
     });
   } catch (error) {
     if (
       error instanceof ComputerBusyError ||
       (error instanceof Error && ["AbortError", "TimeoutError"].includes(error.name))
     ) {
-      throw new RetryRoutineWatchError();
+      throw new RoutineWatchRetry();
     }
     throw new RoutineWatchError(`Could not start the bot's computer: ${errorText(error)}`);
   }
   scheduleComputerSleep(deps.jobs, bot.computer.id);
+  // The check's own time budget starts once the computer is up.
   const botFolder = watchFolder(mode, bot.id);
   ctx.signal = AbortSignal.timeout(CHECK_TIMEOUT_MS);
 
@@ -266,6 +349,7 @@ async function readComputer(
         `The check command exited with ${result.code}${result.stderr ? `: ${clip(result.stderr)}` : "."}`,
       );
     }
+    if (watch.track) return readItems(result.stdout, watch.track);
     return { fingerprint: sha256(result.stdout), detail: clip(result.stdout) || null };
   }
 
@@ -349,7 +433,15 @@ async function readTool(
   if (!resolved) {
     throw new RoutineWatchError(`No connected integration has a tool named ${toolName}.`);
   }
-  assertWatchToolReadOnly(toolName, resolved.tool.readOnly);
+  const refusal = watchToolRefusal({
+    toolName,
+    readOnly: resolved.tool.readOnly,
+    rules: (await deps.prisma.actionApprovalRule.findMany({
+      where: { spaceId: routine.spaceId, createdByUserId: routine.userId },
+      select: { effect: true, matchKind: true, matchValue: true },
+    })) as ActionApprovalRule[],
+  });
+  if (refusal) throw new RoutineWatchError(refusal);
   let data: unknown;
   let failure: string | null = null;
   try {
@@ -366,6 +458,7 @@ async function readTool(
       failure = toolResultText(result.error ?? data);
   }
   if (failure) throw new RoutineWatchError(`${toolName} failed: ${clip(failure)}`);
+  if (watch.track) return readItems(data, watch.track);
   // The fingerprint covers the whole result; only the note the bot reads is unwrapped.
   return {
     fingerprint: sha256(stableStringify(data ?? null)),
@@ -426,13 +519,13 @@ export async function tickRoutineWatch(
     if (!watch) throw new RoutineWatchError("The change trigger's settings are not valid.");
     outcome = await checkRoutineWatch(deps, routine, now);
   } catch (error) {
-    if (error instanceof RetryRoutineWatchError && watch) {
-      const nextRunAt = nextRoutineWatchAt(watch, now);
-      const claimed = await deps.prisma.routine.updateMany({
+    if (error instanceof RoutineWatchRetry) {
+      const retryAt = new Date(now.getTime() + RETRY_AFTER_MS);
+      const deferred = await deps.prisma.routine.updateMany({
         where: { id: routine.id, active: true, nextRunAt: scheduledAt },
-        data: { nextRunAt },
+        data: { nextRunAt: retryAt },
       });
-      if (claimed.count === 1) await deps.jobs.enqueue(routineWakeupJob(routine.id, nextRunAt));
+      if (deferred.count === 1) await deps.jobs.enqueue(routineWakeupJob(routine.id, retryAt));
       return { run: false };
     }
     const reason = error instanceof Error ? error.message : String(error);
@@ -532,11 +625,8 @@ export async function postRoutineWatchMessage(
 }
 
 export function assertWatchToolReadOnly(tool: string, readOnly: boolean | undefined): void {
-  if (readOnly !== true) {
-    throw new RoutineWatchError(
-      `${tool} can change data, so a change trigger can't run it. Pick a read-only tool.`,
-    );
-  }
+  const refusal = watchToolRefusal({ toolName: tool, readOnly, rules: [] });
+  if (refusal) throw new RoutineWatchError(refusal);
 }
 
 /** Validate without executing a tool or provisioning a computer. */
