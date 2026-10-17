@@ -12,6 +12,7 @@ import {
   toolRequiresApproval,
   toolRequiresExplicitApproval,
   unattendedTriggerToolRequiresApproval,
+  watchToolRefusal,
 } from "./action-approval.js";
 
 describe("toolRequiresApproval", () => {
@@ -372,5 +373,43 @@ describe("applyJudgeDecision", () => {
   it("fails closed on consequential checker errors and open on exempt", () => {
     expect(applyJudgeDecision({ decision: "error", consequential: true })).toBe("ask");
     expect(applyJudgeDecision({ decision: "error", consequential: false })).toBe("allow");
+  });
+});
+
+describe("watchToolRefusal", () => {
+  const rule = (matchKind: string, matchValue: string, effect = "require_approval") =>
+    ({ effect, matchKind, matchValue }) as Parameters<typeof watchToolRefusal>[0]["rules"][number];
+
+  it("allows tools that read, by flag, name or action", () => {
+    expect(watchToolRefusal({ toolName: "brain_changed", rules: [] })).toBeNull();
+    expect(watchToolRefusal({ toolName: "gmail_search_threads", rules: [] })).toBeNull();
+    expect(watchToolRefusal({ toolName: "drive_files", readOnly: true, rules: [] })).toBeNull();
+    expect(watchToolRefusal({ toolName: "clickbot_tasks", action: "list", rules: [] })).toBeNull();
+  });
+
+  it("refuses tools that write, by flag, name or action", () => {
+    expect(watchToolRefusal({ toolName: "send_email", rules: [] })).toMatch(/can change/);
+    expect(watchToolRefusal({ toolName: "brain_changed", readOnly: false, rules: [] })).toMatch(
+      /can change/,
+    );
+    expect(watchToolRefusal({ toolName: "clickbot_tasks", action: "delete", rules: [] })).toMatch(
+      /can change/,
+    );
+  });
+
+  it("refuses a tool that does not say it reads", () => {
+    expect(watchToolRefusal({ toolName: "brain_propose", rules: [] })).toMatch(/only reads/);
+  });
+
+  it("refuses a read the space's rules would ask about", () => {
+    expect(
+      watchToolRefusal({ toolName: "brain_search", rules: [rule("tool", "brain_search")] }),
+    ).toMatch(/approval/);
+    expect(
+      watchToolRefusal({
+        toolName: "brain_search",
+        rules: [rule("tool", "brain_search", "always_allow")],
+      }),
+    ).toBeNull();
   });
 });

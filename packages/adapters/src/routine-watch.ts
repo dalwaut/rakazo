@@ -9,7 +9,8 @@ import type {
 import { routineJobKey, routineWakeupJob } from "@rakazo/adapter-kit";
 import type { RoutineWatch, RoutineWatchState } from "@rakazo/contracts";
 import { RoutineWatchSchema, RoutineWatchStateSchema } from "@rakazo/contracts";
-import { connectorToolDeclaresWrite } from "@rakazo/core";
+import type { ActionApprovalRule } from "@rakazo/core";
+import { watchToolRefusal } from "@rakazo/core";
 import type { ComputerMode, PrismaClient, ThreadEvents } from "@rakazo/db";
 import {
   appendEventInTransaction,
@@ -17,7 +18,7 @@ import {
   parseComputerMode,
 } from "@rakazo/db";
 import { scheduleComputerSleep } from "./computer-idle.js";
-import { provisionComputer } from "./computer-lifecycle.js";
+import { ComputerBusyError, provisionComputer } from "./computer-lifecycle.js";
 import { resolveBotWorkspacePath, teamBotWorkspaceDirectory } from "./computer-support.js";
 
 /**
@@ -29,6 +30,10 @@ import { resolveBotWorkspacePath, teamBotWorkspaceDirectory } from "./computer-s
 /** Every sandbox resolves the computer's workspace, `bots/` and `shared/`, from here. */
 const WORKSPACE = "/home/rakazo";
 const CHECK_TIMEOUT_MS = 60_000;
+/** Starting a stopped computer can take longer than a check; it gets its own budget. */
+const PROVISION_TIMEOUT_MS = 5 * 60_000;
+/** A busy or still-booting computer is tried again this soon, not counted as a failure. */
+const RETRY_AFTER_MS = 60_000;
 /** Above this, a files watch keeps only the fingerprint and reports a count. */
 const MAX_TRACKED_ENTRIES = 2_000;
 const MAX_DETAIL = 1_500;
@@ -42,6 +47,8 @@ export type RoutineWatchDeps = {
   events: ThreadEvents;
   dataDir?: string;
   connector?: ConnectorProvider;
+  /** The shell tool's desktop-protection guard: why a command is refused on a graphical computer. */
+  commandRefusal?: (command: string) => string | undefined;
 };
 
 export type RoutineWatchTarget = {
@@ -55,6 +62,9 @@ export type RoutineWatchTarget = {
 
 /** Thrown when a check cannot be completed; the routine is paused and the bot says why. */
 export class RoutineWatchError extends Error {}
+
+/** Thrown when a check cannot run yet for a passing reason; it is retried shortly, not paused. */
+export class RoutineWatchRetry extends Error {}
 
 export type RoutineWatchOutcome = {
   state: RoutineWatchState;
@@ -258,10 +268,14 @@ function context(routine: RoutineWatchTarget): AdapterContext {
 // Lists every file under each path as "path<TAB>size<TAB>mtime". A path that
 // does not exist is reported rather than read as "no files", which would make
 // a deleted folder look unchanged forever.
-const FILES_SCRIPT = `for p in "$@"; do
-  if [ -e "$p" ]; then find "$p" -type f -printf '%p\\t%s\\t%T@\\n' 2>/dev/null
+// A path that cannot be fully listed fails the whole check, with find's error,
+// rather than saving a partial listing that would read as removed files.
+const FILES_SCRIPT = `status=0
+for p in "$@"; do
+  if [ -e "$p" ]; then find "$p" -type f -printf '%p\\t%s\\t%T@\\n' || status=$?
   else printf 'MISSING\\t%s\\n' "$p"; fi
-done`;
+done
+exit $status`;
 
 /** Where a bot's relative paths and commands start. */
 export function watchFolder(mode: ComputerMode, botId: string): string {
@@ -280,20 +294,48 @@ async function readComputer(
   });
   if (!bot?.computer) throw new RoutineWatchError("This bot has no computer to check.");
   const mode = parseComputerMode(bot.computer.scope);
+  if (watch.kind === "command") {
+    const graphical =
+      bot.computer.kind !== "desktop" && deps.sandbox.describe().capabilities.graphical;
+    const refusal = graphical ? deps.commandRefusal?.(watch.command ?? "") : undefined;
+    if (refusal) {
+      throw new RoutineWatchError(
+        `The check command is refused by the desktop-protection guard: ${refusal}.`,
+      );
+    }
+  }
   const ctx = context(routine);
   let computer: Awaited<ReturnType<typeof provisionComputer>>;
   try {
-    computer = await provisionComputer(deps, bot.computer.id, ctx);
+    computer = await provisionComputer(deps, bot.computer.id, {
+      ...ctx,
+      signal: AbortSignal.timeout(PROVISION_TIMEOUT_MS),
+    });
   } catch (error) {
+    // Another run booting it, or an update in progress: try again shortly.
+    if (
+      error instanceof ComputerBusyError ||
+      (error as { name?: string })?.name === "TimeoutError"
+    ) {
+      throw new RoutineWatchRetry(errorText(error));
+    }
     throw new RoutineWatchError(`Could not start the bot's computer: ${errorText(error)}`);
   }
   scheduleComputerSleep(deps.jobs, bot.computer.id);
+  // The check's own time budget starts once the computer is up.
+  const checkCtx = context(routine);
   const botFolder = watchFolder(mode, bot.id);
   const resolve = (path: string) =>
     path.startsWith("/") ? path : `${WORKSPACE}/${resolveBotWorkspacePath(mode, bot.id, path)}`;
 
   if (watch.kind === "command") {
-    const result = await run(deps, computer, ctx, ["sh", "-lc", watch.command ?? ""], botFolder);
+    const result = await run(
+      deps,
+      computer,
+      checkCtx,
+      ["sh", "-lc", watch.command ?? ""],
+      botFolder,
+    );
     if (result.code !== 0) {
       throw new RoutineWatchError(
         `The check command exited with ${result.code}${result.stderr ? `: ${clip(result.stderr)}` : "."}`,
@@ -307,7 +349,7 @@ async function readComputer(
   const result = await run(
     deps,
     computer,
-    ctx,
+    checkCtx,
     ["sh", "-c", FILES_SCRIPT, "watch", ...paths],
     WORKSPACE,
   );
@@ -322,7 +364,8 @@ async function readComputer(
     if (!line) continue;
     const [first, second, third] = line.split("\t");
     if (first === "MISSING") missing.push(second ?? "");
-    else if (first) entries[first] = `${second}:${Math.floor(Number(third))}`;
+    // Full mtime precision, so a same-size edit later in the same second still counts.
+    else if (first) entries[first] = `${second}:${third}`;
   }
   if (missing.length) {
     throw new RoutineWatchError(`Nothing exists at ${missing.join(", ")}.`);
@@ -376,23 +419,28 @@ async function readTool(
     throw new RoutineWatchError(`Could not list the integration's tools: ${errorText(error)}`);
   }
   const call = { tool: toolName, args: watch.args ?? {}, executionId: ctx.operationId };
-  const tool = tools.find((candidate) => candidate.name === toolName);
-  const resolved = tool
-    ? { ...call, route: tool.route }
-    : ((await connector.resolveCall?.(call, ctx).catch(() => undefined))?.call ?? null);
+  const listed = tools.find((candidate) => candidate.name === toolName);
+  // A catalog tool reached through resolveCall carries its declared effect too.
+  const lookup = listed
+    ? { call: { ...call, route: listed.route }, tool: listed }
+    : await connector.resolveCall?.(call, ctx).catch(() => undefined);
+  const resolved = lookup?.call ?? null;
+  const tool = lookup?.tool;
   if (!resolved) {
     throw new RoutineWatchError(`No connected integration has a tool named ${toolName}.`);
   }
-  // A check runs unattended and with no approval, so it may only ever read.
+  // A check runs unattended and never asks, so it may only ever read.
   const action = (watch.args as { action?: unknown } | undefined)?.action;
-  if (
-    connectorToolDeclaresWrite(toolName, tool?.readOnly) ||
-    (typeof action === "string" && connectorToolDeclaresWrite(action))
-  ) {
-    throw new RoutineWatchError(
-      `${toolName}${typeof action === "string" ? ` (${action})` : ""} can change things. A change check only reads; pick a tool or action that only reads.`,
-    );
-  }
+  const refusal = watchToolRefusal({
+    toolName,
+    action: typeof action === "string" ? action : undefined,
+    readOnly: tool?.readOnly,
+    rules: (await deps.prisma.actionApprovalRule.findMany({
+      where: { spaceId: routine.spaceId, createdByUserId: routine.userId },
+      select: { effect: true, matchKind: true, matchValue: true },
+    })) as ActionApprovalRule[],
+  });
+  if (refusal) throw new RoutineWatchError(refusal);
   let data: unknown;
   let failure: string | null = null;
   try {
@@ -404,6 +452,9 @@ async function readTool(
     failure = errorText(error);
   }
   if (failure) throw new RoutineWatchError(`${toolName} failed: ${clip(failure)}`);
+  if ((data as { isError?: unknown } | null)?.isError === true) {
+    throw new RoutineWatchError(`${toolName} returned an error: ${clip(toolResultText(data))}`);
+  }
   if (watch.track) return readItems(data, watch.track);
   // The fingerprint covers the whole result; only the note the bot reads is unwrapped.
   return {
@@ -465,6 +516,15 @@ export async function tickRoutineWatch(
     if (!watch) throw new RoutineWatchError("The change trigger's settings are not valid.");
     outcome = await checkRoutineWatch(deps, routine, now);
   } catch (error) {
+    if (error instanceof RoutineWatchRetry) {
+      const retryAt = new Date(now.getTime() + RETRY_AFTER_MS);
+      const deferred = await deps.prisma.routine.updateMany({
+        where: { id: routine.id, active: true, nextRunAt: scheduledAt },
+        data: { nextRunAt: retryAt },
+      });
+      if (deferred.count === 1) await deps.jobs.enqueue(routineWakeupJob(routine.id, retryAt));
+      return { run: false };
+    }
     const reason = error instanceof Error ? error.message : String(error);
     const paused = await deps.prisma.routine.updateMany({
       where: { id: routine.id, active: true, nextRunAt: scheduledAt },

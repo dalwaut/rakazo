@@ -105,6 +105,51 @@ export function connectorToolDeclaresWrite(toolName: string, readOnly?: boolean)
   );
 }
 
+/** Names that say a tool only looks: wider than the approval read list, used only to allow watches. */
+const WATCHABLE_READ_PATTERN =
+  /(^|_)(get|list|search|find|read|fetch|query|lookup|view|show|describe|status|count|history|changed|changes)(_|$)/i;
+
+/**
+ * Why a routine's change check may not call a connector tool, or null when it may. A check runs
+ * unattended on a timer and never asks, so it needs positive evidence the call only reads: a
+ * read-only flag or a read verb in the tool's name or `action` argument. A declared or named
+ * write, or a matching rule in this space that asks for approval, refuses it.
+ */
+export function watchToolRefusal(input: {
+  toolName: string;
+  action?: string;
+  readOnly?: boolean;
+  connectorKind?: string;
+  rules: ActionApprovalRule[];
+}): string | null {
+  const { toolName, action, readOnly } = input;
+  const call = action ? `${toolName} (${action})` : toolName;
+  if (
+    connectorToolDeclaresWrite(toolName, readOnly) ||
+    (action !== undefined && connectorToolDeclaresWrite(action))
+  ) {
+    return `${call} can change things, and a change check only reads.`;
+  }
+  if (
+    resolveActionApprovalDetail({
+      toolName,
+      connectorKind: input.connectorKind,
+      readOnly,
+      rules: input.rules,
+    }).decision === "ask"
+  ) {
+    return `${call} needs approval under this space's rules, and a change check cannot ask.`;
+  }
+  const reads =
+    readOnly === true ||
+    WATCHABLE_READ_PATTERN.test(toolName) ||
+    (action !== undefined && WATCHABLE_READ_PATTERN.test(action));
+  if (!reads) {
+    return `${call} does not say it only reads, so a change check cannot call it. Pick a tool or action that gets, lists or searches.`;
+  }
+  return null;
+}
+
 export function toolRequiresApproval(
   toolName: string,
   viaConnector: boolean,

@@ -3157,7 +3157,7 @@ export function createRunExecutor(deps: ExecutorDeps) {
         routine.watch == null
           ? null
           : await tickRoutineWatch(
-              deps,
+              { ...deps, commandRefusal: protectedComputerLifecycleRefusal },
               routine,
               { threadId: thread.id, botId: bot.id },
               scheduledAt,
