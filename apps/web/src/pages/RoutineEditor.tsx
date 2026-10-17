@@ -116,6 +116,8 @@ export type RoutineWatchDraft = {
   tool: string;
   /** JSON object of arguments for the tool. */
   args: string;
+  /** Comma-separated field names; see RoutineWatch.track. */
+  track: string;
   everyMinutes: number;
   loud: boolean;
 };
@@ -127,6 +129,7 @@ export function emptyWatchDraft(): RoutineWatchDraft {
     command: "",
     tool: "",
     args: "{}",
+    track: "",
     everyMinutes: ROUTINE_WATCH_DEFAULT_MINUTES,
     loud: false,
   };
@@ -140,6 +143,7 @@ function watchDraftFromRoutine(watch: RoutineWatch | null): RoutineWatchDraft | 
     command: watch.command ?? "",
     tool: watch.tool ?? "",
     args: JSON.stringify(watch.args ?? {}),
+    track: (watch.track ?? []).join(", "),
     everyMinutes: watch.everyMinutes,
     loud: watch.loud,
   };
@@ -150,6 +154,11 @@ export function watchFromDraft(
   draft: RoutineWatchDraft,
 ): { watch: RoutineWatchInput } | { error: string } {
   const base = { kind: draft.kind, everyMinutes: draft.everyMinutes, loud: draft.loud };
+  const fields = draft.track
+    .split(",")
+    .map((field) => field.trim())
+    .filter(Boolean);
+  const track = fields.length ? { track: fields } : {};
   if (draft.kind === "files") {
     const paths = draft.paths
       .split("\n")
@@ -160,7 +169,7 @@ export function watchFromDraft(
   }
   if (draft.kind === "command") {
     if (!draft.command.trim()) return { error: t`Add a command to run` };
-    return { watch: { ...base, command: draft.command.trim() } };
+    return { watch: { ...base, command: draft.command.trim(), ...track } };
   }
   if (!draft.tool.trim()) return { error: t`Pick a tool to check` };
   let args: unknown;
@@ -172,7 +181,9 @@ export function watchFromDraft(
   if (!args || typeof args !== "object" || Array.isArray(args)) {
     return { error: t`Tool arguments must be a JSON object` };
   }
-  return { watch: { ...base, tool: draft.tool.trim(), args: args as Record<string, unknown> } };
+  return {
+    watch: { ...base, tool: draft.tool.trim(), args: args as Record<string, unknown>, ...track },
+  };
 }
 
 export function emptyRoutineDraft(): RoutineDraftState {
@@ -817,6 +828,15 @@ function WatchTriggerCard({
               className="font-mono text-[13px]"
             />
           </>
+        ) : null}
+        {watch.kind !== "files" ? (
+          <Input
+            aria-label={t`Fields that mark a change`}
+            placeholder={t`Fields to compare, e.g. id, modifiedTime (optional)`}
+            value={watch.track}
+            onChange={(e) => onChange({ ...watch, track: e.target.value })}
+            className="font-mono text-[13px]"
+          />
         ) : null}
         <label
           htmlFor={`${id}-every`}

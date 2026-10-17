@@ -9,6 +9,7 @@ import type {
 import { routineJobKey, routineWakeupJob } from "@rakazo/adapter-kit";
 import type { RoutineWatch, RoutineWatchState } from "@rakazo/contracts";
 import { RoutineWatchSchema, RoutineWatchStateSchema } from "@rakazo/contracts";
+import { connectorToolDeclaresWrite } from "@rakazo/core";
 import type { ComputerMode, PrismaClient, ThreadEvents } from "@rakazo/db";
 import {
   appendEventInTransaction,
@@ -136,25 +137,88 @@ export function describeEntryChanges(
   before: Record<string, string>,
   after: Record<string, string>,
 ): string {
+  const items = Object.keys(after).some((key) => after[key]?.startsWith(ITEM_SIGNATURE));
+  // Files are named by path; tracked items by the title saved in their signature.
+  const name = (key: string, signature: string | undefined) =>
+    items ? (itemTitle(signature) ?? key) : key;
   const added: string[] = [];
   const edited: string[] = [];
   const removed: string[] = [];
-  for (const [path, signature] of Object.entries(after)) {
-    if (!(path in before)) added.push(path);
-    else if (before[path] !== signature) edited.push(path);
+  for (const [key, signature] of Object.entries(after)) {
+    if (!(key in before)) added.push(name(key, signature));
+    else if (before[key] !== signature) edited.push(name(key, signature));
   }
-  for (const path of Object.keys(before)) if (!(path in after)) removed.push(path);
+  for (const key of Object.keys(before)) if (!(key in after)) removed.push(name(key, before[key]));
   const lines: string[] = [];
-  const list = (label: string, paths: string[]) => {
-    if (!paths.length) return;
-    const shown = paths.sort().slice(0, MAX_LISTED);
-    const more = paths.length - shown.length;
+  const list = (label: string, names: string[]) => {
+    if (!names.length) return;
+    const shown = names.sort().slice(0, MAX_LISTED);
+    const more = names.length - shown.length;
     lines.push(`${label}: ${shown.join(", ")}${more > 0 ? ` (and ${more} more)` : ""}`);
   };
   list("New", added);
-  list("Edited", edited);
-  list("Removed", removed);
-  return lines.join("\n") || "The watched files changed.";
+  list(items ? "Updated" : "Edited", edited);
+  list(items ? "Gone" : "Removed", removed);
+  return lines.join("\n") || (items ? "The watched items changed." : "The watched files changed.");
+}
+
+/** Marks an item signature, so a note can name items by title rather than identity. */
+const ITEM_SIGNATURE = "item:";
+const TITLE_FIELDS = ["name", "title", "subject", "summary", "filename", "snippet"];
+
+function itemTitle(signature: string | undefined): string | null {
+  if (!signature?.startsWith(ITEM_SIGNATURE)) return null;
+  try {
+    const { title } = JSON.parse(signature.slice(ITEM_SIGNATURE.length)) as { title?: unknown };
+    return typeof title === "string" && title ? title : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * The items in a JSON result, compared by the tracked fields only. Every object
+ * anywhere in the result that carries the first field is an item; that field
+ * is its identity, and the rest decide whether it was updated.
+ */
+export function readItems(data: unknown, track: readonly string[]): Reading {
+  const [identity, ...fields] = track;
+  const entries: Record<string, string> = {};
+  const visit = (value: unknown) => {
+    if (Object.keys(entries).length >= MAX_TRACKED_ENTRIES) return;
+    if (Array.isArray(value)) {
+      for (const item of value) visit(item);
+      return;
+    }
+    if (!value || typeof value !== "object") return;
+    const record = value as Record<string, unknown>;
+    const id = identity ? record[identity] : undefined;
+    if (typeof id === "string" || typeof id === "number") {
+      const titleField = TITLE_FIELDS.find((field) => typeof record[field] === "string");
+      const title = titleField ? String(record[titleField]).slice(0, 120) : null;
+      entries[String(id)] =
+        `${ITEM_SIGNATURE}${stableStringify({ fields: fields.map((field) => record[field] ?? null), title })}`;
+      return;
+    }
+    for (const child of Object.values(record)) visit(child);
+  };
+  visit(resultJson(data));
+  return { fingerprint: sha256(stableStringify(entries)), entries, detail: null };
+}
+
+/** A result as JSON: the parsed text of an MCP or text result, or the data itself. */
+function resultJson(data: unknown): unknown {
+  const text = typeof data === "string" || isMcpEnvelope(data) ? toolResultText(data) : null;
+  if (text === null) return data;
+  try {
+    return JSON.parse(text);
+  } catch {
+    throw new RoutineWatchError("The result is not JSON, so its tracked fields cannot be read.");
+  }
+}
+
+function isMcpEnvelope(data: unknown): boolean {
+  return Array.isArray((data as { content?: unknown } | null)?.content);
 }
 
 function sha256(value: string): string {
@@ -235,6 +299,7 @@ async function readComputer(
         `The check command exited with ${result.code}${result.stderr ? `: ${clip(result.stderr)}` : "."}`,
       );
     }
+    if (watch.track) return readItems(result.stdout, watch.track);
     return { fingerprint: sha256(result.stdout), detail: clip(result.stdout) || null };
   }
 
@@ -318,6 +383,16 @@ async function readTool(
   if (!resolved) {
     throw new RoutineWatchError(`No connected integration has a tool named ${toolName}.`);
   }
+  // A check runs unattended and with no approval, so it may only ever read.
+  const action = (watch.args as { action?: unknown } | undefined)?.action;
+  if (
+    connectorToolDeclaresWrite(toolName, tool?.readOnly) ||
+    (typeof action === "string" && connectorToolDeclaresWrite(action))
+  ) {
+    throw new RoutineWatchError(
+      `${toolName}${typeof action === "string" ? ` (${action})` : ""} can change things. A change check only reads; pick a tool or action that only reads.`,
+    );
+  }
   let data: unknown;
   let failure: string | null = null;
   try {
@@ -329,6 +404,7 @@ async function readTool(
     failure = errorText(error);
   }
   if (failure) throw new RoutineWatchError(`${toolName} failed: ${clip(failure)}`);
+  if (watch.track) return readItems(data, watch.track);
   // The fingerprint covers the whole result; only the note the bot reads is unwrapped.
   return {
     fingerprint: sha256(stableStringify(data ?? null)),

@@ -2,9 +2,11 @@ import { RoutineWatchSchema } from "@rakazo/contracts";
 import { describe, expect, it, vi } from "vitest";
 import type { RoutineWatchTickDeps } from "./routine-watch.js";
 import {
+  checkRoutineWatch,
   compareReading,
   describeEntryChanges,
   parseRoutineWatch,
+  readItems,
   stableStringify,
   tickRoutineWatch,
   toolResultText,
@@ -29,6 +31,15 @@ describe("RoutineWatchSchema", () => {
     const fast = { kind: "tool", tool: "brain_changed", everyMinutes: 1 };
     expect(RoutineWatchSchema.safeParse(fast).success).toBe(false);
     expect(RoutineWatchSchema.safeParse({ ...fast, everyMinutes: 5 }).success).toBe(true);
+  });
+
+  it("tracks items by up to five fields, identity first", () => {
+    const tool = { kind: "tool", tool: "list_tasks", track: ["id", "date_updated"] };
+    expect(RoutineWatchSchema.parse(tool).track).toEqual(["id", "date_updated"]);
+    expect(RoutineWatchSchema.safeParse({ ...tool, track: [] }).success).toBe(false);
+    expect(
+      RoutineWatchSchema.safeParse({ kind: "files", paths: ["a"], track: ["id"] }).success,
+    ).toBe(false);
   });
 
   it("reads an invalid stored watch as none rather than throwing", () => {
@@ -253,5 +264,104 @@ describe("toolResultText", () => {
   it("keeps plain strings and other data readable", () => {
     expect(toolResultText("plain")).toBe("plain");
     expect(toolResultText({ b: 1, a: 2 })).toBe('{"a":2,"b":1}');
+  });
+});
+
+describe("readItems", () => {
+  const inbox = (messages: unknown[]) => ({
+    content: [{ type: "text", text: JSON.stringify({ fetchedAt: Date.now(), messages }) }],
+  });
+
+  it("ignores everything outside the tracked fields", () => {
+    const first = readItems(inbox([{ id: "m1", subject: "Invoice", snippet: "a" }]), ["id"]);
+    const again = readItems(inbox([{ id: "m1", subject: "Invoice", snippet: "b" }]), ["id"]);
+    expect(first.fingerprint).toBe(again.fingerprint);
+  });
+
+  it("names new, updated and gone items by their title", () => {
+    const before = readItems(
+      [
+        { id: "t1", name: "Write rate card", date_updated: "1" },
+        { id: "t2", name: "Call printer", date_updated: "1" },
+      ],
+      ["id", "date_updated"],
+    );
+    const after = readItems(
+      [
+        { id: "t1", name: "Write rate card", date_updated: "2" },
+        { id: "t3", name: "Book venue", date_updated: "1" },
+      ],
+      ["id", "date_updated"],
+    );
+    const previous = {
+      checkedAt: "x",
+      outcome: "unchanged" as const,
+      fingerprint: before.fingerprint,
+      entries: before.entries,
+      detail: null,
+    };
+    expect(compareReading(previous, after, NOW).state.detail).toBe(
+      "New: Book venue\nUpdated: Write rate card\nGone: Call printer",
+    );
+  });
+
+  it("finds items nested anywhere in the result", () => {
+    const reading = readItems({ data: { files: [{ id: "f1", name: "Rates.pdf" }] } }, ["id"]);
+    expect(Object.keys(reading.entries ?? {})).toEqual(["f1"]);
+  });
+
+  it("treats an empty list as no items, not a failure", () => {
+    expect(readItems(inbox([]), ["id"]).entries).toEqual({});
+  });
+});
+
+describe("watch tool guard", () => {
+  function setupTool(tool: { name: string; readOnly?: boolean }, args: Record<string, unknown>) {
+    const execute = vi.fn(async function* () {
+      yield { type: "result", data: [] };
+    });
+    const deps = {
+      connector: {
+        discoverTools: vi.fn(async () => [{ ...tool, route: { connectorId: "installed" } }]),
+        execute,
+      },
+    } as unknown as RoutineWatchTickDeps;
+    const routine = {
+      id: "r",
+      spaceId: "s",
+      userId: "u",
+      botId: "b",
+      watch: { kind: "tool", tool: tool.name, args },
+      watchState: null,
+    };
+    return { deps, routine, execute };
+  }
+
+  it("refuses a tool that changes things, without calling it", async () => {
+    const { deps, routine, execute } = setupTool({ name: "send_email" }, {});
+    await expect(checkRoutineWatch(deps, routine)).rejects.toThrow(/only reads/);
+    expect(execute).not.toHaveBeenCalled();
+  });
+
+  it("refuses a write action on a tool that takes one", async () => {
+    const { deps, routine, execute } = setupTool({ name: "clickbot_tasks" }, { action: "delete" });
+    await expect(checkRoutineWatch(deps, routine)).rejects.toThrow(/only reads/);
+    expect(execute).not.toHaveBeenCalled();
+  });
+
+  it("refuses a tool its integration declares as a write", async () => {
+    const { deps, routine } = setupTool({ name: "brain_changed", readOnly: false }, {});
+    await expect(checkRoutineWatch(deps, routine)).rejects.toThrow(/only reads/);
+  });
+
+  it("allows reads, including tools whose name does not say", async () => {
+    for (const [name, args] of [
+      ["brain_changed", {}],
+      ["clickbot_tasks", { action: "list" }],
+      ["search_threads", { query: "invoice" }],
+    ] as const) {
+      const { deps, routine } = setupTool({ name }, args);
+      await expect(checkRoutineWatch(deps, routine)).resolves.toMatchObject({ changed: false });
+    }
   });
 });

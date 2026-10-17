@@ -93,6 +93,18 @@ export function connectorToolRequiresApproval(toolName: string, readOnly?: boole
   return !READ_ONLY_CONNECTOR_PATTERN.test(toolName);
 }
 
+/**
+ * True when a connector tool declares or is named for a side effect. Stricter callers that only
+ * ever read (a routine's change check) refuse these outright; the name may also be an `action`
+ * argument for tools that take one.
+ */
+export function connectorToolDeclaresWrite(toolName: string, readOnly?: boolean): boolean {
+  if (readOnly === false) return true;
+  return (
+    MUTATING_CONNECTOR_PATTERN.test(toolName) || COMPOUND_CONNECTOR_ACTION_PATTERN.test(toolName)
+  );
+}
+
 export function toolRequiresApproval(
   toolName: string,
   viaConnector: boolean,

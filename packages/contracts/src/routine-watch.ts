@@ -11,6 +11,11 @@ import * as z from "zod";
  *   fingerprint. A non-zero exit is a failed check.
  * - `tool`: a read-only tool from a connected integration, called with fixed
  *   arguments; its result is the fingerprint.
+ *
+ * `track` (tool and command) narrows a JSON result to its items: objects that
+ * carry the first field are compared by the listed fields only, so a fetch
+ * time or a snippet does not count as a change, and the note can say which
+ * items are new, updated or gone.
  */
 export const ROUTINE_WATCH_KINDS = ["files", "command", "tool"] as const;
 export const ROUTINE_WATCH_DEFAULT_MINUTES = 15;
@@ -24,6 +29,7 @@ export const RoutineWatchSchema = z
     command: z.string().trim().min(1).max(2000).optional(),
     tool: z.string().trim().min(1).max(200).optional(),
     args: z.record(z.string(), z.unknown()).optional(),
+    track: z.array(z.string().trim().min(1).max(100)).min(1).max(5).optional(),
     everyMinutes: z.number().int().min(1).max(1440).default(ROUTINE_WATCH_DEFAULT_MINUTES),
     /** Post "No changes" in chat on every quiet check, not only in history. */
     loud: z.boolean().default(false),
@@ -34,6 +40,13 @@ export const RoutineWatchSchema = z
     }
     if (value.kind === "command" && !value.command) {
       ctx.addIssue({ code: "custom", message: "Add a command to run", path: ["command"] });
+    }
+    if (value.kind === "files" && value.track) {
+      ctx.addIssue({
+        code: "custom",
+        message: "Tracked fields apply to a command or tool",
+        path: ["track"],
+      });
     }
     if (value.kind === "tool") {
       if (!value.tool) {
@@ -58,7 +71,10 @@ export const RoutineWatchStateSchema = z.object({
   checkedAt: z.string(),
   outcome: z.enum(ROUTINE_WATCH_OUTCOMES),
   fingerprint: z.string().nullable(),
-  /** files: path -> "size:mtime", so a change can be described, not just detected. */
+  /**
+   * files: path -> "size:mtime"; tracked items: identity -> their tracked fields and title.
+   * Kept so a change can be described, not just detected.
+   */
   entries: z.record(z.string(), z.string()).optional(),
   /** What changed, or why the check failed, in a sentence or a short list. */
   detail: z.string().nullable(),
