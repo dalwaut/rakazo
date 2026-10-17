@@ -243,6 +243,7 @@ import {
   unchangedVisualStreakAfterPageBrowser,
 } from "./computer-tools.js";
 import { checkpointRunComputerWorkspace } from "./computer-workspace.js";
+import { connectedContext, selectRunConnections } from "./connection-context.js";
 import { redactConnectorPayload, sanitizeConnectorError } from "./connector-safety.js";
 import { formatCurrentTimeInstruction } from "./current-time.js";
 import { resolveDeploymentModel } from "./deployment-model.js";
@@ -327,6 +328,9 @@ import {
   secretPausedToolResult,
   tryCompleteConnectionWithCode,
 } from "./run-secret.js";
+
+export { selectRunConnections } from "./connection-context.js";
+
 import { withRuntimeCleanup } from "./runtime-stream.js";
 import {
   cancelScheduleFromTool,
@@ -3723,13 +3727,7 @@ export function createRunExecutor(deps: ExecutorDeps) {
           runId,
           screenLeaseId: screenLeaseIdForRun(computerScreenLease, runId, fence),
           signal: runAbortController.signal,
-          connectedConnections: connectedPlugins.map((row) => ({
-            id: row.id,
-            connectorId: row.connectorId,
-            externalId: row.provider,
-            displayName: row.displayName,
-            providerRef: row.providerRef ?? undefined,
-          })),
+          ...connectedContext(connectedPlugins),
           connectedProviders: connectedComposio.map((row) => row.provider),
         };
         const memoryScope = configuredMemory
@@ -9206,31 +9204,6 @@ function cloudflareRunFields(resolved: { accountId?: string; gatewayId?: string 
     ...(resolved.accountId ? { accountId: resolved.accountId } : {}),
     ...(resolved.gatewayId ? { gatewayId: resolved.gatewayId } : {}),
   };
-}
-
-export function selectRunConnections<
-  T extends { connectorId: string; provider: string; status: string },
->(rows: T[], connectedComposioProviders: string[]): T[] {
-  const liveProviders = new Set(
-    connectedComposioProviders.map((provider) => provider.trim().toLowerCase()).filter(Boolean),
-  );
-  const connectedKeys = new Set(
-    rows
-      .filter((row) => row.status === "connected")
-      .map((row) => `${row.connectorId}:${row.provider.trim().toLowerCase()}`),
-  );
-  return rows.filter((row) => {
-    if (row.status === "connected") return true;
-    if (row.status === "revoked") return false;
-    // Recover a pending/error Composio row only when this provider has no
-    // connected row of its own. A sibling that shares the slug must not
-    // pull a non-live row — and its dead providerRef — into the run.
-    if (row.connectorId !== "composio") return false;
-    if (row.status !== "pending" && row.status !== "error") return false;
-    const providerKey = row.provider.trim().toLowerCase();
-    if (!liveProviders.has(providerKey)) return false;
-    return !connectedKeys.has(`composio:${providerKey}`);
-  });
 }
 
 export async function loadCurrentTurnImages(

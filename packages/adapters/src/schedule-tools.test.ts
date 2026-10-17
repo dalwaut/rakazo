@@ -485,6 +485,7 @@ describe("schedule_create with a watch", () => {
       enqueue,
       deps: {
         prisma: {
+          connection: { findMany: vi.fn(async () => []) },
           bot: { findFirst: vi.fn(async () => ({ computer: null })) },
           routine: { create },
         },

@@ -142,6 +142,7 @@ describe("tickRoutineWatch", () => {
     const deps = {
       prisma: {
         routine: { updateMany },
+        connection: { findMany: vi.fn(async () => []) },
         actionApprovalRule: { findMany: vi.fn(async () => []) },
         bot: {
           findUnique: vi.fn(async () => ({
@@ -328,7 +329,10 @@ describe("tickRoutineWatch", () => {
 describe("tool results", () => {
   it("treats an MCP error result as a failed check, not a reading", async () => {
     const deps = {
-      prisma: { actionApprovalRule: { findMany: vi.fn(async () => []) } },
+      prisma: {
+        connection: { findMany: vi.fn(async () => []) },
+        actionApprovalRule: { findMany: vi.fn(async () => []) },
+      },
       connector: {
         discoverTools: vi.fn(async () => [
           { name: "brain_changed", readOnly: true, route: { connectorId: "installed" } },
@@ -639,7 +643,10 @@ describe("watch tool guard", () => {
       yield { type: "result", data: [] };
     });
     const deps = {
-      prisma: { actionApprovalRule: { findMany: vi.fn(async () => rules) } },
+      prisma: {
+        connection: { findMany: vi.fn(async () => []) },
+        actionApprovalRule: { findMany: vi.fn(async () => rules) },
+      },
       connector: {
         discoverTools: vi.fn(async () => [{ ...tool, route: { connectorId: "installed" } }]),
         execute,
@@ -697,4 +704,95 @@ describe("watch tool guard", () => {
       await expect(checkRoutineWatch(deps, routine)).resolves.toMatchObject({ changed: false });
     }
   });
+});
+
+describe("tracked result regressions", () => {
+  it("compares only tracked fields while retaining titles for notes", () => {
+    const before = readItems([{ id: "m1", subject: "Before", snippet: "a" }], ["id"]);
+    const after = readItems([{ id: "m1", subject: "After", snippet: "b" }], ["id"]);
+    expect(after.fingerprint).toBe(before.fingerprint);
+    expect(after.entries).not.toEqual(before.entries);
+  });
+  it("fingerprints every item and ignores ordering beyond the detail limit", () => {
+    const list = Array.from({ length: 2001 }, (_, i) => ({ id: String(i), modifiedTime: "1" }));
+    const before = readItems(list, ["id", "modifiedTime"]);
+    expect(before.entries).toBeUndefined();
+    expect(readItems([...list].reverse(), ["id", "modifiedTime"]).fingerprint).toBe(
+      before.fingerprint,
+    );
+    list[2000]!.modifiedTime = "2";
+    expect(readItems(list, ["id", "modifiedTime"]).fingerprint).not.toBe(before.fingerprint);
+  });
+  it("includes children even when their parent has an identity", () => {
+    const before = readItems({ id: "folder", files: [{ id: "file", modifiedTime: "1" }] }, [
+      "id",
+      "modifiedTime",
+    ]);
+    const after = readItems({ id: "folder", files: [{ id: "file", modifiedTime: "2" }] }, [
+      "id",
+      "modifiedTime",
+    ]);
+    expect(after.fingerprint).not.toBe(before.fingerprint);
+  });
+  it("keeps readable names and item wording when the last item disappears", () => {
+    const before = readItems([{ id: "t1", name: "Call printer" }], ["id"]);
+    expect(describeEntryChanges(before.entries!, {})).toBe("Gone: Call printer");
+  });
+});
+
+it("loads authorized connection context for discovery, creation validation and connector rules", async () => {
+  const connection = {
+    id: "connection-1",
+    connectorId: "pipedream",
+    provider: "google_drive",
+    providerRef: "fake-account",
+    displayName: "Drive",
+    status: "connected",
+  };
+  const discoverTools = vi.fn(async () => [
+    { name: "google_drive_list_files", readOnly: true, description: "List", inputSchema: {} },
+  ]);
+  const rules: unknown[] = [];
+  const execute = vi.fn(async function* () {
+    yield { type: "result", data: [] };
+  });
+  const deps = {
+    prisma: {
+      connection: {
+        findMany: vi.fn(async () => [
+          connection,
+          { ...connection, id: "revoked", status: "revoked" },
+        ]),
+      },
+      actionApprovalRule: { findMany: vi.fn(async () => rules) },
+    },
+    connector: { discoverTools, execute },
+  } as unknown as RoutineWatchTickDeps;
+  const routine = {
+    id: "r",
+    spaceId: "s",
+    userId: "u",
+    botId: "b",
+    watch: { kind: "tool", tool: "google_drive_list_files" },
+    watchState: null,
+  };
+  await checkRoutineWatch(deps, routine);
+  await validateRoutineWatch(deps, RoutineWatchSchema.parse(routine.watch), routine);
+  expect(discoverTools).toHaveBeenCalledTimes(2);
+  for (const call of vi.mocked(deps.connector!.discoverTools).mock.calls) {
+    expect(call[0]).toMatchObject({
+      connectedConnections: [
+        {
+          id: "connection-1",
+          connectorId: "pipedream",
+          externalId: "google_drive",
+          providerRef: "fake-account",
+        },
+      ],
+      connectedProviders: [],
+    });
+  }
+  rules.push({ effect: "require_approval", matchKind: "connector", matchValue: "google_drive" });
+  await expect(checkRoutineWatch(deps, routine)).rejects.toThrow("needs approval");
+  expect(execute).toHaveBeenCalledOnce();
 });

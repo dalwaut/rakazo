@@ -11,7 +11,7 @@ import { routineJobKey, routineWakeupJob } from "@rakazo/adapter-kit";
 import type { RoutineWatch, RoutineWatchState } from "@rakazo/contracts";
 import { RoutineWatchSchema, RoutineWatchStateSchema } from "@rakazo/contracts";
 import type { ActionApprovalRule } from "@rakazo/core";
-import { watchToolRefusal } from "@rakazo/core";
+import { connectorKindFromToolName, watchToolRefusal } from "@rakazo/core";
 import type { ComputerMode, PrismaClient, ThreadEvents } from "@rakazo/db";
 import {
   appendEventInTransaction,
@@ -21,6 +21,7 @@ import {
 import { scheduleComputerSleep } from "./computer-idle.js";
 import { ComputerBusyError, provisionComputer } from "./computer-lifecycle.js";
 import { teamBotWorkspaceDirectory } from "./computer-support.js";
+import { connectedContext, selectRunConnections } from "./connection-context.js";
 
 /**
  * The checker behind a routine's "when something changes" trigger. It never
@@ -148,7 +149,9 @@ export function describeEntryChanges(
   before: Record<string, string>,
   after: Record<string, string>,
 ): string {
-  const items = Object.keys(after).some((key) => after[key]?.startsWith(ITEM_SIGNATURE));
+  const items = [...Object.values(before), ...Object.values(after)].some((signature) =>
+    signature.startsWith(ITEM_SIGNATURE),
+  );
   // Files are named by path; tracked items by the title saved in their signature.
   const name = (key: string, signature: string | undefined) =>
     items ? (itemTitle(signature) ?? key) : key;
@@ -157,7 +160,7 @@ export function describeEntryChanges(
   const removed: string[] = [];
   for (const [key, signature] of Object.entries(after)) {
     if (!(key in before)) added.push(name(key, signature));
-    else if (before[key] !== signature) edited.push(name(key, signature));
+    else if (itemFields(before[key]) !== itemFields(signature)) edited.push(name(key, signature));
   }
   for (const key of Object.keys(before)) if (!(key in after)) removed.push(name(key, before[key]));
   const lines: string[] = [];
@@ -187,6 +190,14 @@ function itemTitle(signature: string | undefined): string | null {
   }
 }
 
+/** Titles are display details, never implicit tracked fields. */
+function itemFields(signature: string | undefined): string | undefined {
+  if (!signature?.startsWith(ITEM_SIGNATURE)) return signature;
+  return stableStringify(
+    (JSON.parse(signature.slice(ITEM_SIGNATURE.length)) as { fields: unknown }).fields,
+  );
+}
+
 /**
  * The items in a JSON result, compared by the tracked fields only. Every object
  * anywhere in the result that carries the first field is an item; that field
@@ -194,9 +205,8 @@ function itemTitle(signature: string | undefined): string | null {
  */
 export function readItems(data: unknown, track: readonly string[]): Reading {
   const [identity, ...fields] = track;
-  const entries: Record<string, string> = {};
+  const entries: Record<string, string> = Object.create(null);
   const visit = (value: unknown) => {
-    if (Object.keys(entries).length >= MAX_TRACKED_ENTRIES) return;
     if (Array.isArray(value)) {
       for (const item of value) visit(item);
       return;
@@ -209,12 +219,21 @@ export function readItems(data: unknown, track: readonly string[]): Reading {
       const title = titleField ? String(record[titleField]).slice(0, 120) : null;
       entries[String(id)] =
         `${ITEM_SIGNATURE}${stableStringify({ fields: fields.map((field) => record[field] ?? null), title })}`;
-      return;
     }
     for (const child of Object.values(record)) visit(child);
   };
   visit(resultJson(data));
-  return { fingerprint: sha256(stableStringify(entries)), entries, detail: null };
+  const fingerprint = sha256(
+    stableStringify(
+      Object.fromEntries(
+        Object.entries(entries).map(([id, signature]) => [id, itemFields(signature)]),
+      ),
+    ),
+  );
+  const count = Object.keys(entries).length;
+  return count > MAX_TRACKED_ENTRIES
+    ? { fingerprint, detail: `${count} watched items; something among them changed.` }
+    : { fingerprint, entries, detail: null };
 }
 
 /** A result as JSON: the parsed text of an MCP or text result, or the data itself. */
@@ -264,6 +283,24 @@ function context(routine: RoutineWatchTarget): AdapterContext {
     botId: routine.botId,
     signal: AbortSignal.timeout(CHECK_TIMEOUT_MS),
   };
+}
+
+async function toolContext(
+  prisma: PrismaClient,
+  routine: RoutineWatchTarget,
+): Promise<AdapterContext> {
+  const rows = await prisma.connection.findMany({
+    where: { userId: routine.userId, spaceId: routine.spaceId },
+    select: {
+      id: true,
+      connectorId: true,
+      provider: true,
+      providerRef: true,
+      displayName: true,
+      status: true,
+    },
+  });
+  return { ...context(routine), ...connectedContext(selectRunConnections(rows, [])) };
 }
 
 // Lists every file under each path as "path<TAB>size<TAB>mtime". A path that
@@ -417,7 +454,7 @@ async function readTool(
 ): Promise<Reading> {
   const connector = deps.connector;
   if (!connector) throw new RoutineWatchError("No integrations are available to check.");
-  const ctx = context(routine);
+  const ctx = await toolContext(deps.prisma, routine);
   const toolName = watch.tool ?? "";
   let tools: Awaited<ReturnType<ConnectorProvider["discoverTools"]>>;
   try {
@@ -435,6 +472,10 @@ async function readTool(
   }
   const refusal = watchToolRefusal({
     toolName,
+    connectorKind: connectorKindFromToolName(
+      toolName,
+      ctx.connectedConnections?.map((row) => row.externalId),
+    ),
     readOnly: resolved.tool.readOnly,
     rules: (await deps.prisma.actionApprovalRule.findMany({
       where: { spaceId: routine.spaceId, createdByUserId: routine.userId },
@@ -631,7 +672,7 @@ export function assertWatchToolReadOnly(tool: string, readOnly: boolean | undefi
 
 /** Validate without executing a tool or provisioning a computer. */
 export async function validateRoutineWatch(
-  deps: { connector?: ConnectorProvider },
+  deps: { connector?: ConnectorProvider; prisma?: PrismaClient },
   watch: RoutineWatch,
   target: { spaceId: string; userId: string; botId: string },
   computer?: { scope: string } | null,
@@ -643,7 +684,8 @@ export async function validateRoutineWatch(
   // The API composition root has a registry, not the run's authorized connector.
   // Without that provider, tool metadata must be checked by readTool at runtime.
   if (watch.kind !== "tool" || !deps.connector) return;
-  const ctx = context({ ...target, id: "validate", watch, watchState: null });
+  const routine = { ...target, id: "validate", watch, watchState: null };
+  const ctx = deps.prisma ? await toolContext(deps.prisma, routine) : context(routine);
   const name = watch.tool ?? "";
   const tool =
     (await deps.connector.discoverTools(ctx)).find((tool) => tool.name === name) ??

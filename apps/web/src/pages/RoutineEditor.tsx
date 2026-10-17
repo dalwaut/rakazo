@@ -848,13 +848,19 @@ function WatchTriggerCard({
             type="number"
             min={ROUTINE_WATCH_MIN_MINUTES}
             max={1440}
-            value={watch.everyMinutes}
+            value={watch.everyMinutes || ""}
             onChange={(e) =>
               onChange({
                 ...watch,
-                everyMinutes: Math.max(
-                  ROUTINE_WATCH_MIN_MINUTES,
-                  Number(e.target.value) || ROUTINE_WATCH_MIN_MINUTES,
+                everyMinutes: Number(e.target.value),
+              })
+            }
+            onBlur={() =>
+              onChange({
+                ...watch,
+                everyMinutes: Math.min(
+                  1440,
+                  Math.max(ROUTINE_WATCH_MIN_MINUTES, Math.round(watch.everyMinutes)),
                 ),
               })
             }

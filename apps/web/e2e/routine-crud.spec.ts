@@ -417,7 +417,11 @@ test("a routine can run when something it watches changes", async ({ page }, tes
 
   const card = page.getByTestId("routine-watch-card");
   await expect(card.getByRole("combobox", { name: "What to watch" })).toHaveValue("files");
-  await expect(card.getByRole("spinbutton", { name: "Check every" })).toHaveAttribute("min", "5");
+  const interval = card.getByRole("spinbutton", { name: "Check every" });
+  await expect(interval).toHaveAttribute("min", "5");
+  await interval.fill("");
+  await interval.pressSequentially("10");
+  await expect(interval).toHaveValue("10");
   await card.getByRole("textbox", { name: "Files or folders, one per line" }).fill("inbox/");
   // A watch replaces schedules, so the schedule menu is unavailable while one exists.
   await page.getByRole("button", { name: "Add trigger" }).click();
@@ -427,7 +431,7 @@ test("a routine can run when something it watches changes", async ({ page }, tes
 
   expect(await saveAndReturn(page, "routines/create")).toMatchObject({
     crons: [],
-    watch: { kind: "files", paths: ["inbox/"], everyMinutes: 15, loud: false },
+    watch: { kind: "files", paths: ["inbox/"], everyMinutes: 10, loud: false },
   });
   await expect(page.getByRole("button", { name: /Inbox watch/ })).toContainText(
     "When something changes",
