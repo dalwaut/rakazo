@@ -24,3 +24,38 @@ describe("bootstrap upload configuration", () => {
     },
   );
 });
+
+describe("switching spaces in place", () => {
+  it("loads the other space under its own header and leaves it for the shell", async () => {
+    vi.stubGlobal("window", { location: { pathname: "/sign-in" } });
+    const other = { me: { ticketBoardEnabled: false } } as Awaited<
+      ReturnType<typeof rpc.bootstrap>
+    >;
+    vi.mocked(rpc.bootstrap).mockReset().mockResolvedValue(other);
+    const { primeSpaceBootstrap, takeInitialBootstrap } = await import("./bootstrap");
+    await primeSpaceBootstrap("space-b", "bot-b");
+    expect(rpc.bootstrap).toHaveBeenCalledWith(
+      { botId: "bot-b" },
+      { context: { spaceId: "space-b" } },
+    );
+    await expect(takeInitialBootstrap("bot-b")).resolves.toBe(other);
+    expect(rpc.bootstrap).toHaveBeenCalledTimes(1);
+  });
+
+  it("never hands a discarded switch's bootstrap to a later shell", async () => {
+    vi.stubGlobal("window", { location: { pathname: "/sign-in" } });
+    vi.mocked(rpc.bootstrap)
+      .mockReset()
+      .mockResolvedValue({ me: { ticketBoardEnabled: false } } as Awaited<
+        ReturnType<typeof rpc.bootstrap>
+      >);
+    const { discardPrimedBootstrap, primeSpaceBootstrap, takeInitialBootstrap } = await import(
+      "./bootstrap"
+    );
+    const primed = primeSpaceBootstrap("space-b", "bot-b");
+    discardPrimedBootstrap(primed);
+    await takeInitialBootstrap("bot-b");
+    expect(rpc.bootstrap).toHaveBeenLastCalledWith({ botId: "bot-b" });
+    expect(rpc.bootstrap).toHaveBeenCalledTimes(2);
+  });
+});

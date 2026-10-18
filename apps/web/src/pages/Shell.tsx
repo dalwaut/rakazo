@@ -166,7 +166,12 @@ import { TeachRecordingChrome, TeachStopButton } from "../components/teach/Teach
 import { readActivityMode, writeActivityMode } from "../lib/activity-mode";
 import type { ArtifactTarget } from "../lib/artifact-open";
 import { authClient } from "../lib/auth";
-import { takeInitialBootstrap } from "../lib/bootstrap";
+import {
+  discardPrimedBootstrap,
+  primeSpaceBootstrap,
+  takeInitialBootstrap,
+} from "../lib/bootstrap";
+import { initialBootstrapTarget } from "../lib/bootstrap-target";
 import {
   getBotsSidebarDensity,
   subscribeBotsSidebarDensity,
@@ -181,7 +186,7 @@ import {
   requestBrowserNotificationPermission,
   shouldNotifyBrowser,
 } from "../lib/browser-notifications";
-import { startCall, useCallSession } from "../lib/call-session";
+import { getSnapshot as getCallSnapshot, startCall, useCallSession } from "../lib/call-session";
 import { newClientId } from "../lib/client-id";
 import {
   beginComposerDraftSubmission,
@@ -227,6 +232,7 @@ import {
   rosterWorkStatusLabel,
 } from "../lib/roster-status";
 import { clearSpaceSelection, rpc, selectedSpaceId, selectSpace } from "../lib/rpc";
+import { remountShellForSpace, useSpaceEpoch } from "../lib/space-switch";
 import { translateRunError } from "../lib/run-error";
 import { readSeenRunErrorIds, rememberSeenRunErrorId } from "../lib/run-error-storage";
 import { sharedInflight } from "../lib/shared-inflight";
@@ -414,6 +420,12 @@ function readCollapsedRosterParents(userId: string | null | undefined): Set<stri
 }
 
 export function ShellPage() {
+  // A new key per space switch, so nothing from the previous space survives it.
+  const spaceEpoch = useSpaceEpoch();
+  return <SpaceShell key={spaceEpoch} />;
+}
+
+function SpaceShell() {
   const { t } = useLingui();
   const { botId, groupId } = useParams();
   const navigate = useNavigate();
@@ -1571,22 +1583,43 @@ export function ShellPage() {
     return sidebarGroupsForSpaces(sidebarSpaces, query);
   }, [bootstrapMe, botSections, bots, groups, spaces, query]);
 
+  const spaceSwitchRequest = useRef(0);
   const openSpaceChat = useCallback(
     (spaceId: string, path: string) => {
       setMobileSidebarOpen(false);
-      const previousSpaceId = selectedSpaceId();
+      const request = ++spaceSwitchRequest.current;
+      const previousEffective = selectedSpaceId() ?? bootstrapMe?.spaceId;
       // Persist the active space (including primary) so voice/RPC headers match the chat.
-      const selectionStored = selectSpace(spaceId);
-      if (!selectionStored) return;
-      const previousEffective = previousSpaceId ?? bootstrapMe?.spaceId;
-      const boundaryChanged = previousEffective !== spaceId;
-      // Soft-navigate within the same space; reload only when the auth boundary changes
-      // so bootstrapped bots/groups match the request header.
-      if (boundaryChanged) {
-        window.location.assign(path);
+      if (previousEffective === spaceId) {
+        if (selectSpace(spaceId)) navigate(path);
         return;
       }
-      navigate(path);
+      const reload = () => {
+        if (selectSpace(spaceId)) window.location.assign(path);
+      };
+      // Another space is an auth boundary: its bootstrap is loaded first, under that
+      // space's header, then the shell remounts so none of this space's state survives.
+      // A call in progress, or a page outside the shell, still reloads.
+      const target = initialBootstrapTarget(path, false);
+      if (!target || getCallSnapshot()) {
+        reload();
+        return;
+      }
+      const primed = primeSpaceBootstrap(spaceId, target.botId);
+      primed.then(
+        () => {
+          if (request !== spaceSwitchRequest.current || !selectSpace(spaceId)) {
+            discardPrimedBootstrap(primed);
+            return;
+          }
+          navigate(path);
+          remountShellForSpace();
+        },
+        () => {
+          discardPrimedBootstrap(primed);
+          if (request === spaceSwitchRequest.current) reload();
+        },
+      );
     },
     [bootstrapMe?.spaceId, navigate],
   );

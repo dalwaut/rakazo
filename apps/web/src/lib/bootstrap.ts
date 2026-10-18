@@ -47,9 +47,28 @@ export function takeInitialBootstrap(botId?: string) {
   return requestBootstrap(botId);
 }
 
-function requestBootstrap(botId?: string) {
+/**
+ * Loads another space's bootstrap without selecting that space, and leaves it
+ * for the shell to take once the space is selected. Rejects on failure so the
+ * caller can fall back to a full reload.
+ */
+export function primeSpaceBootstrap(spaceId: string, botId?: string): Promise<AppBootstrap> {
+  const promise = requestBootstrap(botId, spaceId);
+  void promise.catch(() => undefined);
+  primedBootstrap = { botId, promise };
+  return promise;
+}
+
+/** Drops a primed bootstrap nobody will take, so a later shell cannot take another space's. */
+export function discardPrimedBootstrap(promise: Promise<AppBootstrap>): void {
+  if (primedBootstrap?.promise === promise) primedBootstrap = null;
+}
+
+function requestBootstrap(botId?: string, spaceId?: string) {
   markOnce("rk:renderer:bootstrap-request-start");
-  return rpc.bootstrap(botId ? { botId } : {}).then((bootstrap) => {
+  const input = botId ? { botId } : {};
+  const request = spaceId ? rpc.bootstrap(input, { context: { spaceId } }) : rpc.bootstrap(input);
+  return request.then((bootstrap) => {
     markOnce("rk:renderer:bootstrap-response");
     ticketBoardEnabled = bootstrap.me.ticketBoardEnabled;
     maxUploadSizeBytes = attachmentMaxBytes(bootstrap.me);
