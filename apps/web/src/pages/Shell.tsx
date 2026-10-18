@@ -235,7 +235,7 @@ import { clearSpaceSelection, rpc, selectedSpaceId, selectSpace } from "../lib/r
 import { translateRunError } from "../lib/run-error";
 import { readSeenRunErrorIds, rememberSeenRunErrorId } from "../lib/run-error-storage";
 import { sharedInflight } from "../lib/shared-inflight";
-import { remountShellForSpace, useSpaceEpoch } from "../lib/space-switch";
+import { markShellReady, remountShellForSpace, useSpaceEpoch } from "../lib/space-switch";
 import {
   activeThreadRuns,
   applyThreadSendReceipt,
@@ -1612,8 +1612,7 @@ function SpaceShell() {
             discardPrimedBootstrap(primed);
             return;
           }
-          navigate(path);
-          remountShellForSpace();
+          remountShellForSpace(() => navigate(path));
         },
         () => {
           discardPrimedBootstrap(primed);
@@ -2051,6 +2050,7 @@ function SpaceShell() {
       markAfterPaint("rk:renderer:thread-painted");
     }
     if (shellReady) {
+      markShellReady();
       markOnce("rk:renderer:shell-ready");
       markAfterPaint("rk:renderer:shell-painted");
     }
@@ -2918,6 +2918,7 @@ function SpaceShell() {
       ) : null}
       <aside
         data-testid="bots-sidebar"
+        data-space-switch="sidebar"
         data-bots-sidebar-density={botsSidebarDensity}
         data-collapsed={botsSidebarCollapsed ? "true" : "false"}
         inert={botsSidebarCollapsed && !mobileSidebarOpen ? true : undefined}
@@ -3705,6 +3706,7 @@ function SpaceShell() {
 
       {/* Keep the composer's z-index inside the chat so phone overlays like the side panel cover it. */}
       <main
+        data-space-switch="main"
         aria-hidden={mobileSidebarOpen || undefined}
         inert={mobileSidebarOpen}
         className="isolate flex min-w-0 flex-1 flex-col bg-background"
