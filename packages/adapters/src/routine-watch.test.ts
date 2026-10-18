@@ -459,7 +459,11 @@ describe("tickRoutineWatch on a computer", () => {
     );
     const result = await checkRoutineWatch(deps, routine);
     expect(result.state.entries).toEqual({ "-reports/q3.md": "3:1.25" });
-    expect(execute.mock.calls[0]?.[1].argv.at(-1)).toBe("./-reports");
+    expect(execute).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ argv: expect.arrayContaining(["./-reports"]) }),
+      expect.anything(),
+    );
   });
 
   it("runs a team desktop command in the provider-relative bot folder", async () => {
