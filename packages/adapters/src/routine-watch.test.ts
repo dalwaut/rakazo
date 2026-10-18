@@ -378,6 +378,7 @@ describe("tickRoutineWatch on a computer", () => {
   function setupComputer(
     watch: Record<string, unknown>,
     exec: { stdout?: string; stderr?: string; code?: number } = {},
+    computer = { id: "computer-1", scope: "team", kind: "vm" },
   ) {
     const updateMany = vi.fn(async () => ({ count: 1 }));
     const messages: unknown[] = [];
@@ -402,7 +403,7 @@ describe("tickRoutineWatch on a computer", () => {
         bot: {
           findUnique: vi.fn(async () => ({
             id: "bot-1",
-            computer: { id: "computer-1", scope: "team", kind: "vm" },
+            computer,
           })),
         },
         $transaction: vi.fn(async (fn: (client: unknown) => unknown) => fn(tx)),
@@ -424,6 +425,53 @@ describe("tickRoutineWatch on a computer", () => {
     };
     return { deps, routine, updateMany, messages, execute };
   }
+
+  it.each(["team", "dedicated"])("checks files in a %s desktop workspace", async (scope) => {
+    const computer = {
+      id: "desktop-computer-1",
+      botId: "computer-home",
+      kind: "desktop" as const,
+      providerRef: "/tmp/watch-fixture/desktop-computers/computer-home",
+    };
+    vi.mocked(provisionComputer).mockResolvedValueOnce(computer);
+    const { deps, routine, execute } = setupComputer(
+      { kind: "files", paths: ["inbox/"] },
+      { stdout: "inbox/note.txt\t3\t1.25\n" },
+      { id: "computer-1", scope, kind: "desktop" },
+    );
+    const result = await checkRoutineWatch(deps, routine);
+    expect(result.state.entries).toEqual({ "inbox/note.txt": "3:1.25" });
+    expect(execute).toHaveBeenCalledWith(
+      computer,
+      {
+        argv: ["sh", "-c", FILES_SCRIPT, "watch", scope === "team" ? "." : "", "inbox"],
+        cwd: scope === "team" ? "bots/bot-1" : undefined,
+        timeoutMs: 60_000,
+      },
+      expect.anything(),
+    );
+  });
+
+  it("runs a team desktop command in the provider-relative bot folder", async () => {
+    const computer = {
+      id: "desktop-computer-1",
+      botId: "computer-home",
+      kind: "desktop" as const,
+      providerRef: "/tmp/watch-fixture/desktop-computers/computer-home",
+    };
+    vi.mocked(provisionComputer).mockResolvedValueOnce(computer);
+    const { deps, routine, execute } = setupComputer(
+      { kind: "command", command: "ls inbox" },
+      { stdout: "note.txt\n" },
+      { id: "computer-1", scope: "team", kind: "desktop" },
+    );
+    expect((await checkRoutineWatch(deps, routine)).state.detail).toBe("note.txt");
+    expect(execute).toHaveBeenCalledWith(
+      computer,
+      { argv: ["sh", "-lc", "ls inbox"], cwd: "bots/bot-1", timeoutMs: 60_000 },
+      expect.anything(),
+    );
+  });
 
   it("retries in a minute without pausing when the computer is busy", async () => {
     vi.mocked(provisionComputer).mockRejectedValueOnce(new ComputerBusyError());
@@ -566,6 +614,23 @@ describe("file watch boundaries", () => {
 });
 
 describe("files listing script", () => {
+  it("resolves a relative team root in the provider's working directory", () => {
+    const folder = realpathSync(mkdtempSync(join(tmpdir(), "routine-watch-")));
+    try {
+      mkdirSync(join(folder, "inbox"));
+      // Keep the containment check real; emulate GNU find on hosts with BSD find.
+      const script = `find() { printf 'inbox/note.txt\\t3\\t1.25\\n'; }\n${FILES_SCRIPT}`;
+      const result = spawnSync("sh", ["-c", script, "watch", ".", "inbox"], {
+        cwd: folder,
+        encoding: "utf8",
+      });
+      expect(result.status).toBe(0);
+      expect(result.stdout).toBe("inbox/note.txt\t3\t1.25\n");
+    } finally {
+      rmSync(folder, { recursive: true, force: true });
+    }
+  });
+
   it("refuses a symlink that points outside the bot folder before listing", () => {
     const temp = realpathSync(mkdtempSync(join(tmpdir(), "routine-watch-")));
     try {

@@ -20,7 +20,7 @@ import {
 } from "@rakazo/db";
 import { scheduleComputerSleep } from "./computer-idle.js";
 import { ComputerBusyError, provisionComputer } from "./computer-lifecycle.js";
-import { teamBotWorkspaceDirectory } from "./computer-support.js";
+import { resolveBotWorkspaceCwd, teamBotWorkspaceDirectory } from "./computer-support.js";
 import { connectedContext, selectRunConnections } from "./connection-context.js";
 
 /**
@@ -29,7 +29,7 @@ import { connectedContext, selectRunConnections } from "./connection-context.js"
  * with the last one, so a routine only spends a run when there is news.
  */
 
-/** Every sandbox resolves the computer's workspace, `bots/` and `shared/`, from here. */
+/** Virtual root for validating watch paths; providers resolve the actual workspace. */
 const WORKSPACE = "/home/rakazo";
 const CHECK_TIMEOUT_MS = 60_000;
 /** Starting a stopped computer can take longer than a check; it gets its own budget. */
@@ -317,6 +317,7 @@ async function toolContext(
 // does not exist is reported rather than read as "no files", which would make
 // a deleted folder look unchanged forever.
 export const FILES_SCRIPT = `root="$1"; shift
+if [ -n "$root" ]; then root=$(realpath -- "$root") || exit 1; fi
 status=0
 for p in "$@"; do
   if [ -e "$p" ]; then
@@ -385,12 +386,13 @@ async function readComputer(
   scheduleComputerSleep(deps.jobs, bot.computer.id);
   // The check's own time budget starts once the computer is up.
   const botFolder = watchFolder(mode, bot.id);
+  const cwd = resolveBotWorkspaceCwd(mode, bot.id, undefined);
   ctx.signal = AbortSignal.timeout(CHECK_TIMEOUT_MS);
 
   if (watch.kind === "command") {
     // Runs this shell command on the bot's computer every interval, in its folder,
     // without a model or per-run approval: equivalent to the bot running it itself.
-    const result = await run(deps, computer, ctx, ["sh", "-lc", watch.command ?? ""], botFolder);
+    const result = await run(deps, computer, ctx, ["sh", "-lc", watch.command ?? ""], cwd);
     if (result.code !== 0) {
       throw new RoutineWatchError(
         `The check command exited with ${result.code}${result.stderr ? `: ${clip(result.stderr)}` : "."}`,
@@ -400,13 +402,21 @@ async function readComputer(
     return { fingerprint: sha256(result.stdout), detail: clip(result.stdout) || null };
   }
 
-  const paths = (watch.paths ?? []).map((path) => resolveWatchPath(mode, bot.id, path));
+  const paths = (watch.paths ?? []).map((path) => {
+    const resolved = resolveWatchPath(mode, bot.id, path);
+    const relative = posix.relative(botFolder, resolved);
+    // Inside the workspace, pass the path relative to the provider's working
+    // directory so a desktop computer resolves it under its own home.
+    return mode !== "team" && (relative.startsWith("..") || posix.isAbsolute(relative))
+      ? resolved
+      : relative || ".";
+  });
   const result = await run(
     deps,
     computer,
     ctx,
-    ["sh", "-c", FILES_SCRIPT, "watch", mode === "team" ? botFolder : "", ...paths],
-    WORKSPACE,
+    ["sh", "-c", FILES_SCRIPT, "watch", mode === "team" ? "." : "", ...paths],
+    cwd,
   );
   if (result.code !== 0) {
     throw new RoutineWatchError(
@@ -436,7 +446,7 @@ async function run(
   computer: Awaited<ReturnType<typeof provisionComputer>>,
   ctx: AdapterContext,
   argv: string[],
-  cwd: string,
+  cwd: string | undefined,
 ): Promise<{ stdout: string; stderr: string; code: number }> {
   let stdout = "";
   let stderr = "";
