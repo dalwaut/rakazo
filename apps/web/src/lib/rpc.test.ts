@@ -81,4 +81,20 @@ describe("shell RPC space isolation", () => {
       expect(headers).toEqual([originalSpace, originalSpace, "space-b"]);
     },
   );
+
+  it("honours a space a call names explicitly", async () => {
+    vi.stubGlobal("window", {
+      location: { origin: "https://example.test", pathname: "/app" },
+      localStorage: { getItem: () => "space-a" },
+    });
+    const fetch = vi.fn(async (_input: Request, _init: RequestInit) => Response.json({ json: {} }));
+    vi.stubGlobal("fetch", fetch);
+    const shellRpc = createSpaceRpc("space-a");
+    await shellRpc.me(undefined, { context: { spaceId: "space-b" } });
+    await shellRpc.me();
+    const headers = fetch.mock.calls.map((call) =>
+      new Headers(call[1].headers).get("x-rakazo-space-id"),
+    );
+    expect(headers).toEqual(["space-b", "space-a"]);
+  });
 });

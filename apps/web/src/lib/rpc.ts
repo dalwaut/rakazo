@@ -84,7 +84,11 @@ export function createSpaceRpc(spaceId: string | null): typeof rpc {
     call: (path, input, options) =>
       link.call(path, input, {
         ...options,
-        context: { ...options.context, spaceId },
+        // A call that names its own space (e.g. renaming another space's section) keeps it.
+        context: {
+          ...options.context,
+          spaceId: options.context.spaceId === undefined ? spaceId : options.context.spaceId,
+        },
       }),
   });
 }
