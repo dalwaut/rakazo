@@ -61,7 +61,6 @@ test("going back during a slow switch keeps the user where they went", async ({ 
   await signup(page, `space-switch-back-${stamp}@rakazo.test`, "password12", "Space Switcher");
   await completeOnboarding(page);
   const firstBot = new URL(page.url()).pathname;
-  const homeSpace = await page.evaluate(() => window.localStorage.getItem("rakazo:space-id"));
   const helper = await page.request.post("/rpc/bots/create", {
     data: {
       json: {
@@ -96,6 +95,8 @@ test("going back during a slow switch keeps the user where they went", async ({ 
     .first()
     .click();
   await page.waitForURL(`**/app/${helperBot.id}`);
+  const homeSpace = await page.evaluate(() => window.localStorage.getItem("rakazo:space-id"));
+  expect(homeSpace).not.toBe(space.id);
 
   // Hold the other space's bootstrap until the user has gone back.
   let release = () => {};
