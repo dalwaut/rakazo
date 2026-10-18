@@ -51,15 +51,17 @@ describe("switching spaces in place", () => {
     const { markShellReady, remountShellForSpace } = await import("./space-switch");
     remountShellForSpace(() => true);
     const first = transitions[0]!.update();
+    await vi.advanceTimersByTimeAsync(1_000);
     remountShellForSpace(() => true);
     const second = transitions[1]!.update();
-    // The first switch gives up waiting; the second's shell then reports ready.
-    await vi.advanceTimersByTimeAsync(1_500);
-    await first;
     let secondDone = false;
     void second.then(() => {
       secondDone = true;
     });
+    // Only the first switch has waited long enough to give up.
+    await vi.advanceTimersByTimeAsync(500);
+    await first;
+    expect(secondDone).toBe(false);
     markShellReady();
     await vi.advanceTimersByTimeAsync(0);
     expect(secondDone).toBe(true);
