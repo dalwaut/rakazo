@@ -232,10 +232,10 @@ import {
   rosterWorkStatusLabel,
 } from "../lib/roster-status";
 import { clearSpaceSelection, rpc, selectedSpaceId, selectSpace } from "../lib/rpc";
-import { remountShellForSpace, useSpaceEpoch } from "../lib/space-switch";
 import { translateRunError } from "../lib/run-error";
 import { readSeenRunErrorIds, rememberSeenRunErrorId } from "../lib/run-error-storage";
 import { sharedInflight } from "../lib/shared-inflight";
+import { remountShellForSpace, useSpaceEpoch } from "../lib/space-switch";
 import {
   activeThreadRuns,
   applyThreadSendReceipt,
