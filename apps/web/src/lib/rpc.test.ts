@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { clearSpaceSelection, selectedSpaceId, selectSpace } from "./rpc.js";
+import { clearSpaceSelection, createSpaceRpc, rpc, selectedSpaceId, selectSpace } from "./rpc.js";
 
 afterEach(() => {
   vi.unstubAllGlobals();
@@ -48,4 +48,37 @@ describe("space selection storage", () => {
     expect(selectSpace("space-support")).toBe(true);
     expect(setItem).toHaveBeenCalledWith("rakazo:space-id", "space-support");
   });
+});
+
+describe("shell RPC space isolation", () => {
+  it.each(["space-a", null])(
+    "keeps async follow-up requests in the original space %s after selection changes",
+    async (originalSpace) => {
+      let selected = originalSpace;
+      vi.stubGlobal("window", {
+        location: { origin: "https://example.test", pathname: "/app" },
+        localStorage: { getItem: () => selected },
+      });
+      const fetch = vi.fn(async (_input: Request, _init: RequestInit) =>
+        Response.json({ json: {} }),
+      );
+      vi.stubGlobal("fetch", fetch);
+      const shellRpc = createSpaceRpc(selectedSpaceId());
+      await shellRpc.me();
+      selected = "space-b";
+      // For example, an upload continues after reading a file or awaiting another RPC.
+      await shellRpc.artifacts.create({
+        botId: "bot-a",
+        name: "example.txt",
+        mimeType: "text/plain",
+        contentBase64: "ZXhhbXBsZQ==",
+      });
+      await rpc.me();
+      const headers = fetch.mock.calls.map((call) => {
+        const init = call[1];
+        return new Headers(init.headers).get("x-rakazo-space-id");
+      });
+      expect(headers).toEqual([originalSpace, originalSpace, "space-b"]);
+    },
+  );
 });

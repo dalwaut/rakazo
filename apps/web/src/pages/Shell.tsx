@@ -216,6 +216,7 @@ import {
   isFilePaste,
   readFileAsBase64,
   revokePendingAttachmentPreviews,
+  usePendingAttachmentPreviewCleanup,
 } from "../lib/pending-attachments";
 import { markAfterPaint, markOnce } from "../lib/performance";
 import { quoteDraftForSelection } from "../lib/quote-selection";
@@ -231,11 +232,17 @@ import {
   rosterHasUndismissedRunError,
   rosterWorkStatusLabel,
 } from "../lib/roster-status";
-import { clearSpaceSelection, rpc, selectedSpaceId, selectSpace } from "../lib/rpc";
+import { clearSpaceSelection, createSpaceRpc, selectedSpaceId, selectSpace } from "../lib/rpc";
 import { translateRunError } from "../lib/run-error";
 import { readSeenRunErrorIds, rememberSeenRunErrorId } from "../lib/run-error-storage";
 import { sharedInflight } from "../lib/shared-inflight";
-import { markShellReady, remountShellForSpace, useSpaceEpoch } from "../lib/space-switch";
+import {
+  guardShellNavigate,
+  markShellReady,
+  remountShellForSpace,
+  spaceSwitchDecision,
+  useSpaceEpoch,
+} from "../lib/space-switch";
 import {
   activeThreadRuns,
   applyThreadSendReceipt,
@@ -428,7 +435,25 @@ export function ShellPage() {
 function SpaceShell() {
   const { t } = useLingui();
   const { botId, groupId } = useParams();
-  const navigate = useNavigate();
+  const [rpc] = useState(() => createSpaceRpc(selectedSpaceId()));
+  const routerNavigate = useNavigate();
+  const navigateRef = useRef(routerNavigate);
+  navigateRef.current = routerNavigate;
+  const alive = useRef(true);
+  useEffect(() => {
+    alive.current = true;
+    return () => {
+      alive.current = false;
+    };
+  }, []);
+  const navigate = useMemo(
+    () =>
+      guardShellNavigate(
+        () => navigateRef.current,
+        () => alive.current,
+      ),
+    [],
+  );
   const [searchParams, setSearchParams] = useSearchParams();
   // Mirrors searchParams for effects that only need to read it once on run,
   // not re-run on every unrelated query-param change (e.g. the SSE subscribe
@@ -487,6 +512,7 @@ function SpaceShell() {
     () => false,
   );
   const [pendingAttachments, setPendingAttachments] = useState<PendingAttachment[]>([]);
+  usePendingAttachmentPreviewCleanup(pendingAttachments);
   const [replyTarget, setReplyTarget] = useState<ThreadMessage | null>(null);
   const [replyQuote, setReplyQuote] = useState<string | null>(null);
   const [sending, setSending] = useState(false);
@@ -1613,9 +1639,15 @@ function SpaceShell() {
         reload();
         return;
       }
-      const startedAt = window.location.href;
-      const current = () =>
-        request === spaceSwitchRequest.current && window.location.href === startedAt;
+      const startedAt = window.location.pathname;
+      const decision = () =>
+        spaceSwitchDecision(
+          request === spaceSwitchRequest.current,
+          startedAt,
+          window.location.pathname,
+          Boolean(getCallSnapshot()),
+        );
+      const current = () => decision() !== "abandon";
       const primed = primeSpaceBootstrap(spaceId, target.botId);
       primed.then(
         () => {
@@ -1630,7 +1662,18 @@ function SpaceShell() {
             return;
           }
           remountShellForSpace(() => {
-            if (!current() || getCallSnapshot() || !selectSpace(spaceId)) {
+            const action = decision();
+            if (action !== "commit") {
+              discardPrimedBootstrap(primed);
+              if (action === "reload") {
+                // Leave the view-transition update before starting a full navigation.
+                window.setTimeout(() => {
+                  if (current()) reload();
+                }, 0);
+              }
+              return false;
+            }
+            if (!selectSpace(spaceId)) {
               discardPrimedBootstrap(primed);
               return false;
             }
@@ -4562,6 +4605,7 @@ function SpaceShell() {
             onConfirm={async () => {
               const targetId = deleteSpaceTarget.id;
               const result = await rpc.spaces.remove({ spaceId: targetId });
+              if (!alive.current) return;
               setDeleteSpaceTarget(null);
               setPanel(null);
               const effectiveSpaceId = selectedSpaceId() ?? bootstrapMe?.spaceId;
@@ -4666,6 +4710,7 @@ function SpaceShell() {
             onCancel={() => setNewSpaceOpen(false)}
             onConfirm={async (name) => {
               const space = await rpc.spaces.create({ name });
+              if (!alive.current) return;
               if (!selectSpace(space.id)) {
                 setNewSpaceOpen(false);
                 await refreshBots();

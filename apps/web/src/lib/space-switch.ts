@@ -1,5 +1,6 @@
 import { useSyncExternalStore } from "react";
 import { flushSync } from "react-dom";
+import type { NavigateFunction, NavigateOptions, To } from "react-router-dom";
 
 /**
  * Switching spaces in place: the shell is keyed by this counter, so a switch
@@ -64,13 +65,37 @@ export function remountShellForSpace(commit: () => boolean): void {
     if (remounted) await ready;
     if (shellReady === resolveReady) shellReady = null;
   });
-  void transition.finished.finally(() => {
+  const release = () => {
     activeTransitions -= 1;
     if (activeTransitions === 0) root.classList.remove(SWITCHING_CLASS);
-  });
+  };
+  // Skipped or interrupted transitions may reject; release without an unhandled rejection.
+  void transition.finished.then(release, release);
 }
 
 /** Called by the shell once its bots and conversation are on screen. */
 export function markShellReady(): void {
   shellReady?.();
+}
+
+/** Async work from a departing shell must not move the next shell's route. */
+export function guardShellNavigate(
+  getNavigate: () => NavigateFunction,
+  isAlive: () => boolean,
+): NavigateFunction {
+  return (to: To | number, options?: NavigateOptions) => {
+    if (!isAlive()) return;
+    const navigate = getNavigate();
+    return typeof to === "number" ? navigate(to) : navigate(to, options);
+  };
+}
+
+export function spaceSwitchDecision(
+  currentRequest: boolean,
+  startedPathname: string,
+  pathname: string,
+  hasCall: boolean,
+): "abandon" | "reload" | "commit" {
+  if (!currentRequest || pathname !== startedPathname) return "abandon";
+  return hasCall ? "reload" : "commit";
 }

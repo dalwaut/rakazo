@@ -2,7 +2,7 @@ import type { AppBootstrap } from "@rakazo/contracts";
 import { ATTACHMENT_MAX_BYTES, attachmentMaxBytes } from "@rakazo/contracts";
 import { initialBootstrapTarget } from "./bootstrap-target";
 import { markOnce } from "./performance";
-import { rpc } from "./rpc";
+import { rpc, selectedSpaceId } from "./rpc";
 
 let ticketBoardEnabled = false;
 let maxUploadSizeBytes = ATTACHMENT_MAX_BYTES;
@@ -20,7 +20,11 @@ export function subscribeTicketBoardEnabled(listener: () => void) {
   };
 }
 
-let primedBootstrap: { botId?: string; promise: Promise<AppBootstrap> } | null = null;
+let primedBootstrap: {
+  botId?: string;
+  spaceId?: string;
+  promise: Promise<AppBootstrap>;
+} | null = null;
 
 const initialTarget = initialBootstrapTarget(
   window.location.pathname,
@@ -37,13 +41,20 @@ if (initialTarget) {
 
 /** The speculative first-load bootstrap, left in place for the shell to take. */
 export function peekInitialBootstrap(): Promise<AppBootstrap> | undefined {
-  return primedBootstrap?.promise;
+  // Only the speculative first load may be shared with the subscription gate.
+  return primedBootstrap?.spaceId === undefined ? primedBootstrap?.promise : undefined;
 }
 
 export function takeInitialBootstrap(botId?: string) {
   const primed = primedBootstrap;
   primedBootstrap = null;
-  if (primed && primed.botId === botId) return primed.promise;
+  if (
+    primed &&
+    primed.botId === botId &&
+    (primed.spaceId === undefined || primed.spaceId === selectedSpaceId())
+  ) {
+    return primed.spaceId === undefined ? primed.promise : primed.promise.then(applyCapabilities);
+  }
   return requestBootstrap(botId);
 }
 
@@ -55,7 +66,7 @@ export function takeInitialBootstrap(botId?: string) {
 export function primeSpaceBootstrap(spaceId: string, botId?: string): Promise<AppBootstrap> {
   const promise = requestBootstrap(botId, spaceId);
   void promise.catch(() => undefined);
-  primedBootstrap = { botId, promise };
+  primedBootstrap = { botId, spaceId, promise };
   return promise;
 }
 
@@ -70,9 +81,13 @@ function requestBootstrap(botId?: string, spaceId?: string) {
   const request = spaceId ? rpc.bootstrap(input, { context: { spaceId } }) : rpc.bootstrap(input);
   return request.then((bootstrap) => {
     markOnce("rk:renderer:bootstrap-response");
-    ticketBoardEnabled = bootstrap.me.ticketBoardEnabled;
-    maxUploadSizeBytes = attachmentMaxBytes(bootstrap.me);
-    for (const listener of capabilityListeners) listener();
-    return bootstrap;
+    return spaceId === undefined ? applyCapabilities(bootstrap) : bootstrap;
   });
+}
+
+function applyCapabilities(bootstrap: AppBootstrap): AppBootstrap {
+  ticketBoardEnabled = bootstrap.me.ticketBoardEnabled;
+  maxUploadSizeBytes = attachmentMaxBytes(bootstrap.me);
+  for (const listener of capabilityListeners) listener();
+  return bootstrap;
 }
