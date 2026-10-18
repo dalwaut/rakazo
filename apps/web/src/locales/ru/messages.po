@@ -17,11 +17,6 @@ msgstr ""
 msgid " (unread)"
 msgstr " (непрочитано)"
 
-#. placeholder {0}: group.entries.length
-#: src/pages/ModelSettingsOverlay.tsx
-msgid "{0, plural, one {# model} other {# models}}"
-msgstr "{0, plural, one {# модель} few {# модели} many {# моделей} other {# модели}}"
-
 #. placeholder {0}: Math.ceil(oauth.expiresInSeconds / 60)
 #: src/pages/ModelSettingsOverlay.tsx
 #: src/pages/Onboarding.tsx
@@ -893,6 +888,10 @@ msgstr "Встроенный"
 msgid "Can't reach the server."
 msgstr "Не удаётся связаться с сервером."
 
+#: src/pages/ModelSettingsOverlay.tsx
+msgid "Can't read images"
+msgstr "Не может читать изображения"
+
 #: src/components/AskCard.tsx
 #: src/components/ComputerMaintenanceActions.tsx
 #: src/components/ComputerUpdateProgress.tsx
@@ -956,10 +955,6 @@ msgstr "Не удалось отобразить диаграмму: {error}."
 #: src/pages/MessagingSettingsOverlay.tsx
 msgid "Chat apps"
 msgstr "Приложения для чата"
-
-#: src/pages/AccountSettingsOverlay.tsx
-msgid "Chat apps, group channels, and agent connections."
-msgstr "Приложения чата, групповые каналы и подключения агентов."
 
 #: src/pages/Shell.tsx
 msgid "Chat Settings"
@@ -1034,10 +1029,6 @@ msgstr "Выберите новый пароль"
 #: src/pages/shell/avatar-studio-popover.tsx
 msgid "Choose file"
 msgstr "Выбрать файл"
-
-#: src/pages/ModelSettingsOverlay.tsx
-msgid "Choose which connected model Rakazo uses."
-msgstr "Выберите, какую подключенную модель использует Rakazo."
 
 #: src/pages/shell/dialogs.tsx
 msgid "Clear"
@@ -1262,10 +1253,6 @@ msgstr "Подключить"
 msgid "Connect a model"
 msgstr "Подключить модель"
 
-#: src/pages/ModelBackupsSettings.tsx
-msgid "Connect a provider to add backups."
-msgstr "Подключите провайдера, чтобы добавить резервные модели."
-
 #: src/pages/ModelSettingsOverlay.tsx
 msgid "Connect API key"
 msgstr "Подключить API-ключ"
@@ -1282,10 +1269,6 @@ msgstr "Подключите MCP-сервер «{name}»"
 msgid "Connect OAuth"
 msgstr "Подключить OAuth"
 
-#: src/pages/ModelSettingsOverlay.tsx
-msgid "Connect this provider to use it as your personal model."
-msgstr "Подключите этого провайдера, чтобы использовать его в качестве своей личной модели."
-
 #: src/pages/PluginsOverlay.tsx
 msgid "Connect Treg"
 msgstr "Подключить Treg"
@@ -1299,21 +1282,10 @@ msgstr "Подключить Treg"
 msgid "Connected"
 msgstr "Подключено"
 
-#. placeholder {0}: credential.label
-#: src/pages/ModelSettingsOverlay.tsx
-msgid "Connected · {0}"
-msgstr "Подключено · {0}"
-
 #. placeholder {0}: selected.name
 #: src/pages/VoiceSettingsOverlay.tsx
 msgid "Connected {0}."
 msgstr "Подключено: {0}."
-
-#. placeholder {0}: selected.label
-#. placeholder {0}: selectedLabelRef.current ?? "this model"
-#: src/pages/ModelSettingsOverlay.tsx
-msgid "Connected and using {0}."
-msgstr "Подключено и используется {0}."
 
 #: src/pages/shell/message-cards.tsx
 msgid "Connected. Its tools are available from your next message."
@@ -1631,6 +1603,10 @@ msgstr "Не удалось загрузить статус обновления
 msgid "Could not load voice settings"
 msgstr "Не удалось загрузить голосовые настройки."
 
+#: src/lib/sign-out.ts
+msgid "Could not log out. Try again."
+msgstr "Не удалось выйти. Попробуйте ещё раз."
+
 #: src/pages/BillingSettingsPanel.tsx
 #: src/pages/Paywall.tsx
 msgid "Could not open billing"
@@ -1829,6 +1805,10 @@ msgstr "Не удалось обновить аватары"
 #: src/pages/MessagingSettingsOverlay.tsx
 msgid "Couldn't update messaging settings"
 msgstr "Не удалось обновить настройки обмена сообщениями."
+
+#: src/pages/AccountSettingsOverlay.tsx
+msgid "Couldn't update your timezone"
+msgstr ""
 
 #: src/pages/Board.tsx
 #: src/pages/Shell.tsx
@@ -2852,10 +2832,6 @@ msgstr "Управление серверами MCP"
 msgid "Manage messaging settings"
 msgstr "Управление настройками обмена сообщениями"
 
-#: src/pages/MemorySettingsOverlay.tsx
-msgid "Manage the Space semantic memory provider."
-msgstr "Управляйте провайдером семантической памяти Space."
-
 #: src/pages/PluginsOverlay.tsx
 msgid "Manual"
 msgstr "Вручную"
@@ -3547,6 +3523,10 @@ msgstr "Выберите инструмент для проверки"
 msgid "Pin"
 msgstr "Закрепить"
 
+#: src/components/ArtifactFileCard.tsx
+msgid "Play {name}"
+msgstr "Воспроизвести {name}"
+
 #: src/pages/VoiceSettingsOverlay.tsx
 msgid "Playing…"
 msgstr "Воспроизведение…"
@@ -3642,6 +3622,10 @@ msgstr ""
 #: src/pages/ActivityList.tsx
 msgid "Recent"
 msgstr "Недавние"
+
+#: src/pages/VoiceSettingsOverlay.tsx
+msgid "Reconnect"
+msgstr ""
 
 #: src/pages/McpServersOverlay.tsx
 msgid "Reconnect OAuth"
@@ -4021,10 +4005,6 @@ msgstr "Сохранить резервные модели"
 msgid "Save credential"
 msgstr ""
 
-#: src/pages/ModelSettingsOverlay.tsx
-msgid "Save limits"
-msgstr ""
-
 #: src/pages/shell/bot-credentials.tsx
 msgid "Save new value"
 msgstr ""
@@ -4191,6 +4171,7 @@ msgstr "Имя сервера"
 #: src/pages/McpServersOverlay.tsx
 #: src/pages/ModelSettingsOverlay.tsx
 #: src/pages/Onboarding.tsx
+#: src/pages/VoiceSettingsOverlay.tsx
 msgid "Server URL"
 msgstr "URL-адрес сервера"
 
@@ -4435,10 +4416,6 @@ msgstr "Остановлено."
 msgid "Stored encrypted"
 msgstr "Хранится в зашифрованном виде"
 
-#: src/pages/ModelSettingsOverlay.tsx
-msgid "Stored securely. Never shown here."
-msgstr "Хранится безопасно. Здесь не отображается."
-
 #: src/pages/AccountSettingsOverlay.tsx
 msgid "Stream replies"
 msgstr "Потоковые ответы"
@@ -4659,6 +4636,10 @@ msgstr ""
 msgid "Time of day"
 msgstr "Время суток"
 
+#: src/pages/AccountSettingsOverlay.tsx
+msgid "Timezone"
+msgstr ""
+
 #: src/pages/Board.tsx
 #: src/pages/shell/bot-panel.tsx
 msgid "Title"
@@ -4713,6 +4694,10 @@ msgstr "Инструменты"
 #: src/components/call/CallCard.tsx
 msgid "Transcript"
 msgstr "Расшифровка"
+
+#: src/pages/VoiceSettingsOverlay.tsx
+msgid "Transcription model"
+msgstr ""
 
 #: src/pages/ExternalConversationSettings.tsx
 msgid "Treat like a person"
@@ -4862,6 +4847,12 @@ msgstr ""
 #: src/pages/Shell.tsx
 msgid "Usage"
 msgstr "Использование"
+
+#. Switches the saved timezone to this device's, e.g. 'Use Pacific/Auckland'
+#. placeholder {0}: deviceTimezone.replaceAll("_", " ")
+#: src/pages/AccountSettingsOverlay.tsx
+msgid "Use {0}"
+msgstr ""
 
 #: src/pages/HostComputerPrompt.tsx
 msgid "Use {hostLabel}"

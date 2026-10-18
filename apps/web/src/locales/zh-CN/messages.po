@@ -17,11 +17,6 @@ msgstr ""
 msgid " (unread)"
 msgstr "（未读）"
 
-#. placeholder {0}: group.entries.length
-#: src/pages/ModelSettingsOverlay.tsx
-msgid "{0, plural, one {# model} other {# models}}"
-msgstr "{0, plural, one {# 个模型} other {# 个模型}}"
-
 #. placeholder {0}: Math.ceil(oauth.expiresInSeconds / 60)
 #: src/pages/ModelSettingsOverlay.tsx
 #: src/pages/Onboarding.tsx
@@ -893,6 +888,10 @@ msgstr "内置"
 msgid "Can't reach the server."
 msgstr "无法连接服务器。"
 
+#: src/pages/ModelSettingsOverlay.tsx
+msgid "Can't read images"
+msgstr "无法读取图像"
+
 #: src/components/AskCard.tsx
 #: src/components/ComputerMaintenanceActions.tsx
 #: src/components/ComputerUpdateProgress.tsx
@@ -956,10 +955,6 @@ msgstr "图表渲染失败：{error}"
 #: src/pages/MessagingSettingsOverlay.tsx
 msgid "Chat apps"
 msgstr "聊天应用"
-
-#: src/pages/AccountSettingsOverlay.tsx
-msgid "Chat apps, group channels, and agent connections."
-msgstr "聊天应用、群组频道和 Agent 连接。"
 
 #: src/pages/Shell.tsx
 msgid "Chat Settings"
@@ -1034,10 +1029,6 @@ msgstr "设置新密码"
 #: src/pages/shell/avatar-studio-popover.tsx
 msgid "Choose file"
 msgstr "选择文件"
-
-#: src/pages/ModelSettingsOverlay.tsx
-msgid "Choose which connected model Rakazo uses."
-msgstr "选择 Rakazo 使用的已连接模型。"
 
 #: src/pages/shell/dialogs.tsx
 msgid "Clear"
@@ -1262,10 +1253,6 @@ msgstr "连接"
 msgid "Connect a model"
 msgstr "连接模型"
 
-#: src/pages/ModelBackupsSettings.tsx
-msgid "Connect a provider to add backups."
-msgstr "连接提供商后即可添加备用模型。"
-
 #: src/pages/ModelSettingsOverlay.tsx
 msgid "Connect API key"
 msgstr "连接 API 密钥"
@@ -1282,10 +1269,6 @@ msgstr "连接 MCP 服务器“{name}”"
 msgid "Connect OAuth"
 msgstr "连接 OAuth"
 
-#: src/pages/ModelSettingsOverlay.tsx
-msgid "Connect this provider to use it as your personal model."
-msgstr "连接此提供方，作为你的个人模型。"
-
 #: src/pages/PluginsOverlay.tsx
 msgid "Connect Treg"
 msgstr "连接 Treg"
@@ -1299,21 +1282,10 @@ msgstr "连接 Treg"
 msgid "Connected"
 msgstr "已连接"
 
-#. placeholder {0}: credential.label
-#: src/pages/ModelSettingsOverlay.tsx
-msgid "Connected · {0}"
-msgstr "已连接 · {0}"
-
 #. placeholder {0}: selected.name
 #: src/pages/VoiceSettingsOverlay.tsx
 msgid "Connected {0}."
 msgstr "已连接 {0}。"
-
-#. placeholder {0}: selected.label
-#. placeholder {0}: selectedLabelRef.current ?? "this model"
-#: src/pages/ModelSettingsOverlay.tsx
-msgid "Connected and using {0}."
-msgstr "已连接并使用 {0}。"
 
 #: src/pages/shell/message-cards.tsx
 msgid "Connected. Its tools are available from your next message."
@@ -1631,6 +1603,10 @@ msgstr "无法加载更新状态"
 msgid "Could not load voice settings"
 msgstr "无法加载语音设置"
 
+#: src/lib/sign-out.ts
+msgid "Could not log out. Try again."
+msgstr "无法退出登录。请重试。"
+
 #: src/pages/BillingSettingsPanel.tsx
 #: src/pages/Paywall.tsx
 msgid "Could not open billing"
@@ -1829,6 +1805,10 @@ msgstr "无法更新头像"
 #: src/pages/MessagingSettingsOverlay.tsx
 msgid "Couldn't update messaging settings"
 msgstr "无法更新消息设置"
+
+#: src/pages/AccountSettingsOverlay.tsx
+msgid "Couldn't update your timezone"
+msgstr ""
 
 #: src/pages/Board.tsx
 #: src/pages/Shell.tsx
@@ -2852,10 +2832,6 @@ msgstr "管理 MCP 服务器"
 msgid "Manage messaging settings"
 msgstr "管理消息设置"
 
-#: src/pages/MemorySettingsOverlay.tsx
-msgid "Manage the Space semantic memory provider."
-msgstr "管理工作区语义记忆提供方。"
-
 #: src/pages/PluginsOverlay.tsx
 msgid "Manual"
 msgstr ""
@@ -3547,6 +3523,10 @@ msgstr "选择要检查的工具"
 msgid "Pin"
 msgstr "置顶"
 
+#: src/components/ArtifactFileCard.tsx
+msgid "Play {name}"
+msgstr "播放 {name}"
+
 #: src/pages/VoiceSettingsOverlay.tsx
 msgid "Playing…"
 msgstr "播放中…"
@@ -3642,6 +3622,10 @@ msgstr ""
 #: src/pages/ActivityList.tsx
 msgid "Recent"
 msgstr "最近"
+
+#: src/pages/VoiceSettingsOverlay.tsx
+msgid "Reconnect"
+msgstr ""
 
 #: src/pages/McpServersOverlay.tsx
 msgid "Reconnect OAuth"
@@ -4021,10 +4005,6 @@ msgstr "保存备用模型"
 msgid "Save credential"
 msgstr ""
 
-#: src/pages/ModelSettingsOverlay.tsx
-msgid "Save limits"
-msgstr ""
-
 #: src/pages/shell/bot-credentials.tsx
 msgid "Save new value"
 msgstr ""
@@ -4191,6 +4171,7 @@ msgstr "服务器名称"
 #: src/pages/McpServersOverlay.tsx
 #: src/pages/ModelSettingsOverlay.tsx
 #: src/pages/Onboarding.tsx
+#: src/pages/VoiceSettingsOverlay.tsx
 msgid "Server URL"
 msgstr "服务器 URL"
 
@@ -4435,10 +4416,6 @@ msgstr "已停止。"
 msgid "Stored encrypted"
 msgstr "已加密存储"
 
-#: src/pages/ModelSettingsOverlay.tsx
-msgid "Stored securely. Never shown here."
-msgstr "已安全存储。不会显示在这里。"
-
 #: src/pages/AccountSettingsOverlay.tsx
 msgid "Stream replies"
 msgstr "流式回复"
@@ -4659,6 +4636,10 @@ msgstr ""
 msgid "Time of day"
 msgstr "时间"
 
+#: src/pages/AccountSettingsOverlay.tsx
+msgid "Timezone"
+msgstr ""
+
 #: src/pages/Board.tsx
 #: src/pages/shell/bot-panel.tsx
 msgid "Title"
@@ -4713,6 +4694,10 @@ msgstr ""
 #: src/components/call/CallCard.tsx
 msgid "Transcript"
 msgstr "文字记录"
+
+#: src/pages/VoiceSettingsOverlay.tsx
+msgid "Transcription model"
+msgstr ""
 
 #: src/pages/ExternalConversationSettings.tsx
 msgid "Treat like a person"
@@ -4862,6 +4847,12 @@ msgstr ""
 #: src/pages/Shell.tsx
 msgid "Usage"
 msgstr "用量"
+
+#. Switches the saved timezone to this device's, e.g. 'Use Pacific/Auckland'
+#. placeholder {0}: deviceTimezone.replaceAll("_", " ")
+#: src/pages/AccountSettingsOverlay.tsx
+msgid "Use {0}"
+msgstr ""
 
 #: src/pages/HostComputerPrompt.tsx
 msgid "Use {hostLabel}"

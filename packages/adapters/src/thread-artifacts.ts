@@ -123,7 +123,8 @@ export async function materializeCurrentTurnFiles(
   blocks: MessageBlock[] | undefined,
   input: {
     context: AdapterContext & { botId: string };
-    computer: ComputerRef;
+    /** Starts the computer; called only when there is a file to copy onto it. */
+    computer: () => Promise<ComputerRef>;
     computerMode: ComputerMode;
     markWorkspaceDirty?: () => void;
   },
@@ -168,7 +169,7 @@ async function materializeThreadFiles(
       relativePath,
     );
     const exists = preserveExisting
-      ? await deps.sandbox.readFile(input.computer, workspacePath, input.context).then(
+      ? await deps.sandbox.readFile(await input.computer(), workspacePath, input.context).then(
           () => true,
           () => false,
         )
@@ -182,7 +183,7 @@ async function materializeThreadFiles(
       }
       input.markWorkspaceDirty?.();
       await deps.sandbox.writeFile(
-        input.computer,
+        await input.computer(),
         { path: workspacePath, content: bytes },
         input.context,
       );
@@ -227,6 +228,47 @@ export async function materializeRecentThreadFiles(
     }
   }
   return materialized;
+}
+
+/**
+ * The earlier attachments a run can expect on its computer, without starting it. The run
+ * copies them with materializeRecentThreadFiles once something first uses the computer.
+ */
+export async function listRecentThreadFiles(
+  deps: Pick<Parameters<typeof materializeCurrentTurnFiles>[0], "prisma" | "maxUploadSizeBytes">,
+  history: ReadonlyArray<{ id?: string; role: string }>,
+  messages: ReadonlyArray<{ id: string; blocks: MessageBlock[] }>,
+  input: {
+    context: AdapterContext;
+    skipMessageId?: string | null;
+    maxTurns: number;
+  },
+): Promise<MaterializedThreadFile[]> {
+  const blocks = recentAttachmentBlocks(history, messages, input);
+  if (!blocks.length) return [];
+  const rows = await deps.prisma.artifact.findMany({
+    where: {
+      id: { in: blocks.map((block) => block.artifactId) },
+      spaceId: input.context.spaceId,
+      userId: input.context.userId,
+    },
+  });
+  const byId = new Map(rows.map((row) => [row.id, row]));
+  const limit = deps.maxUploadSizeBytes ?? ATTACHMENT_MAX_BYTES;
+  return blocks
+    .flatMap((block) => {
+      const row = byId.get(block.artifactId);
+      if (!row || row.size > limit) return [];
+      return [
+        {
+          name: row.name,
+          mimeType: row.mimeType,
+          size: row.size,
+          path: `attachments/${row.id}${attachmentExtensionForMimeType(row.mimeType)}`,
+        },
+      ];
+    })
+    .slice(0, ATTACHMENT_MAX_COUNT);
 }
 
 /** The newest attachments across the last `maxTurns` user turns that carry any. */

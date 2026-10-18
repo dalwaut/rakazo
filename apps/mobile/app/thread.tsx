@@ -8,7 +8,12 @@ import type {
   MessageReaction,
   Routine,
 } from "@rakazo/contracts";
-import { attachmentMaxBytes, canReactToThreadMessage, MESSAGE_REACTIONS } from "@rakazo/contracts";
+import {
+  attachmentMaxBytes,
+  canReactToThreadMessage,
+  isAttachmentAudioMimeType,
+  MESSAGE_REACTIONS,
+} from "@rakazo/contracts";
 import type { SlashActionId, ThreadItem } from "@rakazo/core";
 import {
   abortableDelay,
@@ -98,6 +103,7 @@ import Animated, {
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { AppConnectCard } from "../components/AppConnectCard";
 import { AskActions } from "../components/AskActions";
+import { AudioAttachment } from "../components/audio-attachment";
 import { BotAvatar } from "../components/bot-avatar";
 import { ChoiceCard } from "../components/ChoiceCard";
 import { ComputerCard } from "../components/ComputerCard";
@@ -2000,12 +2006,16 @@ function Thread({ sessionEpoch }: { sessionEpoch: number }) {
     const targetGroupId = groupId;
     if (!targetBotId && !targetGroupId) return;
     try {
-      await rpc("threads/react", {
+      const result = await rpc<{ ok: true; runIds?: string[] }>("threads/react", {
         ...(targetGroupId ? { groupId: targetGroupId } : { botId: targetBotId! }),
         messageId: message.id,
         reaction,
         clientNonce: newClientNonce(),
       });
+      if (result.runIds?.length && isCurrentTarget(targetBotId, targetGroupId)) {
+        // The reaction is saved; a failed refresh is caught up by live events.
+        await refresh().catch(() => {});
+      }
     } catch (err) {
       if (!isCurrentTarget(targetBotId, targetGroupId)) return;
       Alert.alert(t("Could not update reaction"), errorText(err, t("Try again.")));
@@ -3698,6 +3708,15 @@ const MessageBubble = memo(function MessageBubble({
                 </Text>
               </Pressable>
             )
+          ) : attachment.artifactId && isAttachmentAudioMimeType(attachment.mimeType ?? "") ? (
+            <AudioAttachment
+              pressableProps={actionProps}
+              key={`${attachment.artifactId}-${index}`}
+              target={artifactTarget}
+              artifactId={attachment.artifactId}
+              name={attachment.name ?? t("File")}
+              mimeType={attachment.mimeType!}
+            />
           ) : (
             <Pressable
               {...actionProps}

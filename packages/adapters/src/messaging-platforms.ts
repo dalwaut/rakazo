@@ -107,7 +107,7 @@ export function messagingPlatformsFromEnv(
     } satisfies Pick<Adapter, "isDM">);
     platforms.push({
       provider: "sendblue",
-      capabilities: { direct: true, groups: true, typing: true },
+      capabilities: { direct: true, groups: true, receipt: "typing" },
       adapter,
       directThreadId: (address) =>
         adapter.encodeThreadId({ fromNumber: lineNumber, contactNumber: address }),
@@ -119,13 +119,22 @@ export function messagingPlatformsFromEnv(
   }
 
   if (env.slackBotToken && env.slackSigningSecret) {
+    const adapter = createSlackAdapter({
+      botToken: env.slackBotToken,
+      signingSecret: env.slackSigningSecret,
+    });
+    // Slack's reactions.add fails with already_reacted when a replayed inbound reacts twice.
+    const addReaction = adapter.addReaction.bind(adapter);
+    Object.assign(adapter, {
+      addReaction: (threadId, messageId, emoji) =>
+        addReaction(threadId, messageId, emoji).catch((error: unknown) => {
+          if (slackPlatformError(error) !== "already_reacted") throw error;
+        }),
+    } satisfies Pick<Adapter, "addReaction">);
     platforms.push({
       provider: "slack",
-      capabilities: { direct: true, groups: true, typing: false },
-      adapter: createSlackAdapter({
-        botToken: env.slackBotToken,
-        signingSecret: env.slackSigningSecret,
-      }),
+      capabilities: { direct: true, groups: true, receipt: "reaction" },
+      adapter,
       enrichTeamRoom: enrichSlackTeamRoom,
     });
   }
@@ -138,7 +147,7 @@ export function messagingPlatformsFromEnv(
   ) {
     platforms.push({
       provider: "whatsapp",
-      capabilities: { direct: true, groups: false, typing: false },
+      capabilities: { direct: true, groups: false, receipt: null },
       adapter: createWhatsAppAdapter({
         accessToken: env.whatsappAccessToken,
         phoneNumberId: env.whatsappPhoneNumberId,
@@ -153,7 +162,7 @@ export function messagingPlatformsFromEnv(
   if (env.telegramBotToken && env.telegramWebhookSecret) {
     platforms.push({
       provider: "telegram",
-      capabilities: { direct: true, groups: false, typing: false },
+      capabilities: { direct: true, groups: false, receipt: null },
       // Auto mode: uses the webhook route when Telegram has one registered
       // (checked via getWebhookInfo), and otherwise falls back to
       // long-polling getUpdates. Self-hosted/local deployments typically
@@ -179,7 +188,7 @@ export function messagingPlatformsFromEnv(
   if (env.larkAppId && env.larkAppSecret && env.larkVerificationToken) {
     platforms.push({
       provider: "lark",
-      capabilities: { direct: true, groups: false, typing: false },
+      capabilities: { direct: true, groups: false, receipt: null },
       // Webhook-only: ws/long-connection incoming would consume events so
       // the HTTP webhook at /api/v1/messaging/webhook/lark never sees them.
       adapter: createLarkAdapter({
@@ -262,6 +271,12 @@ export function enrichSlackTeamRoom(
     enrichment.kind = eventType === "app_mention" || base.mentionsBot ? "mention" : "ambient";
   }
   return enrichment;
+}
+
+function slackPlatformError(error: unknown): string | undefined {
+  const record = asRecord(error);
+  if (record?.code !== "slack_webapi_platform_error") return undefined;
+  return stringField(asRecord(record.data) ?? {}, "error");
 }
 
 function asRecord(value: unknown): Record<string, unknown> | null {

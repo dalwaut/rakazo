@@ -156,16 +156,16 @@ describe("messagingPlatformsFromEnv", () => {
     }
   });
 
-  it("declares group and typing support only for sendblue", () => {
+  it("declares group support and the receipt for each platform", () => {
     const platforms = messagingPlatformsFromEnv(fullEnv);
     const capabilities = Object.fromEntries(
       platforms.map((platform) => [platform.provider, platform.capabilities]),
     );
-    expect(capabilities.sendblue).toEqual({ direct: true, groups: true, typing: true });
-    expect(capabilities.slack).toEqual({ direct: true, groups: true, typing: false });
-    expect(capabilities.whatsapp).toEqual({ direct: true, groups: false, typing: false });
-    expect(capabilities.telegram).toEqual({ direct: true, groups: false, typing: false });
-    expect(capabilities.lark).toEqual({ direct: true, groups: false, typing: false });
+    expect(capabilities.sendblue).toEqual({ direct: true, groups: true, receipt: "typing" });
+    expect(capabilities.slack).toEqual({ direct: true, groups: true, receipt: "reaction" });
+    expect(capabilities.whatsapp).toEqual({ direct: true, groups: false, receipt: null });
+    expect(capabilities.telegram).toEqual({ direct: true, groups: false, receipt: null });
+    expect(capabilities.lark).toEqual({ direct: true, groups: false, receipt: null });
   });
 });
 

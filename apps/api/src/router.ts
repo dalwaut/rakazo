@@ -115,6 +115,7 @@ import {
   serializeModelSecret,
   stableStringify,
   storeBotSecret,
+  storedOpenAiCompatibleProbeKey,
   takeoverLeaseMs,
   toComputerRef,
   touchRunningComputer,
@@ -147,10 +148,12 @@ import {
   attachmentSizeLabel,
   BotSecretAuth,
   ComputerCommandSchema,
+  canonicalPiProviderId,
   foldComputerCommands,
   IntegrationProviderIdSchema,
   OPENAI_COMPATIBLE_PROVIDER_ID,
   parseTicketRef,
+  storedPiProviderIds,
   usableModelId,
 } from "@rakazo/contracts";
 import {
@@ -198,6 +201,7 @@ import {
   listSpaceBackupModels,
   listTicketComments,
   lockOwnedGroup,
+  modelCredentialProviderFilter,
   newestModelCredentialOrder,
   newestVoiceCredentialOrder,
   Prisma,
@@ -302,6 +306,7 @@ import {
   toVoiceStatus,
   updateVoiceSpeechModel,
   voiceContext,
+  voiceCredentialServer,
 } from "./voice.js";
 
 const MAX_COMPUTER_TEXT_FILE_BYTES = 2 * 1024 * 1024;
@@ -842,10 +847,23 @@ export function createRouter(deps: RouterDeps) {
       update: authed.preferences.update.handler(async ({ context, input }): Promise<Me> => {
         await deps.prisma.user.update({
           where: { id: context.actor.userId },
-          data: { avatarStyle: input.avatarStyle },
+          data: {
+            ...(input.avatarStyle === undefined ? {} : { avatarStyle: input.avatarStyle }),
+            ...(input.timezone === undefined ? {} : { timezone: input.timezone }),
+          },
         });
         return meDto(deps, context.actor);
       }),
+      adoptTimezone: authed.preferences.adoptTimezone.handler(
+        async ({ context, input }): Promise<Me> => {
+          // Conditional in one statement: a concurrent explicit save always wins.
+          await deps.prisma.user.updateMany({
+            where: { id: context.actor.userId, timezone: null },
+            data: { timezone: input.timezone },
+          });
+          return meDto(deps, context.actor);
+        },
+      ),
     },
     spaces: {
       list: authed.spaces.list.handler(async ({ context }) =>
@@ -1222,7 +1240,9 @@ export function createRouter(deps: RouterDeps) {
             }
             if (
               catalog.some(
-                (entry) => entry.provider === choice.provider && entry.id === choice.modelId,
+                (entry) =>
+                  entry.provider === canonicalPiProviderId(choice.provider) &&
+                  entry.id === choice.modelId,
               )
             )
               continue;
@@ -1297,8 +1317,53 @@ export function createRouter(deps: RouterDeps) {
       }),
       probeOpenAiCompatible: authed.models.probeOpenAiCompatible.handler(
         async ({ context, input }) => {
+          let apiKey = input.apiKey;
+          if (!apiKey?.trim()) {
+            try {
+              const preferred = await findModelCredential(
+                deps.prisma,
+                context.actor,
+                OPENAI_COMPATIBLE_PROVIDER_ID,
+              );
+              const credentials = await deps.prisma.userModelCredential.findMany({
+                where: { userId: context.actor.userId, provider: OPENAI_COMPATIBLE_PROVIDER_ID },
+                orderBy: [{ updatedAt: "desc" }, { id: "desc" }],
+              });
+              const candidates = preferred
+                ? [preferred, ...credentials.filter((credential) => credential.id !== preferred.id)]
+                : credentials;
+              const secrets = await deps.prisma.secret.findMany({
+                where: {
+                  id: { in: candidates.map((credential) => credential.secretId) },
+                  userId: context.actor.userId,
+                  spaceId: null,
+                },
+                select: { id: true, ciphertext: true },
+              });
+              const ciphertexts = new Map(secrets.map((secret) => [secret.id, secret.ciphertext]));
+              for (const credential of candidates) {
+                const ciphertext = ciphertexts.get(credential.secretId);
+                if (!ciphertext) continue;
+                try {
+                  apiKey = storedOpenAiCompatibleProbeKey(
+                    input.baseUrl,
+                    await deps.secrets.load(ciphertext, credential.secretId),
+                  );
+                  if (apiKey) break;
+                } catch {
+                  // An unreadable secret must not prevent trying the remaining credentials.
+                }
+              }
+            } catch {
+              // An unavailable saved key must not prevent a keyless probe.
+            }
+          }
           try {
-            const models = await probeOpenAiCompatibleModels(input, undefined, context.signal);
+            const models = await probeOpenAiCompatibleModels(
+              { ...input, apiKey },
+              undefined,
+              context.signal,
+            );
             return { models };
           } catch (error) {
             throw new ORPCError("BAD_REQUEST", {
@@ -1386,12 +1451,15 @@ export function createRouter(deps: RouterDeps) {
               where: {
                 spaceId: context.actor.spaceId,
                 userId: context.actor.userId,
-                credential: { provider: input.provider },
+                credential: { provider: modelCredentialProviderFilter(input.provider) },
               },
               include: { credential: true },
             }),
             client.userModelCredential.findMany({
-              where: { userId: context.actor.userId, provider: input.provider },
+              where: {
+                userId: context.actor.userId,
+                provider: modelCredentialProviderFilter(input.provider),
+              },
             }),
           ]);
           return {
@@ -1546,10 +1614,16 @@ export function createRouter(deps: RouterDeps) {
           deps.prisma.$transaction(
             async (tx) => {
               await tx.spaceBackupModel.deleteMany({
-                where: { userId: context.actor.userId, provider: input.provider },
+                where: {
+                  userId: context.actor.userId,
+                  provider: modelCredentialProviderFilter(input.provider),
+                },
               });
               const existing = await tx.userModelCredential.findMany({
-                where: { userId: context.actor.userId, provider: input.provider },
+                where: {
+                  userId: context.actor.userId,
+                  provider: modelCredentialProviderFilter(input.provider),
+                },
               });
               if (existing.length === 0) return;
               const ids = existing.map((row) => row.id);
@@ -1674,7 +1748,9 @@ export function createRouter(deps: RouterDeps) {
           }
           const knownModels = [...listPiCatalog(), scriptedCatalogEntry];
           const inCatalog = knownModels.some(
-            (item) => item.provider === input.modelProvider && item.id === input.modelId,
+            (item) =>
+              item.provider === canonicalPiProviderId(input.modelProvider ?? "") &&
+              item.id === input.modelId,
           );
           if (!inCatalog && credential.defaultModel !== input.modelId) {
             throw new ORPCError("BAD_REQUEST", { message: "Unknown model for that provider" });
@@ -1710,7 +1786,9 @@ export function createRouter(deps: RouterDeps) {
           const effectiveModelId = modelId ?? me.defaultModel;
           if (effectiveProvider && effectiveModelId) {
             const entry = listPiCatalog().find(
-              (item) => item.provider === effectiveProvider && item.id === effectiveModelId,
+              (item) =>
+                item.provider === canonicalPiProviderId(effectiveProvider) &&
+                item.id === effectiveModelId,
             );
             let allowed = entry?.thinkingLevels;
             if (effectiveProvider === OPENAI_COMPATIBLE_PROVIDER_ID) {
@@ -2215,13 +2293,29 @@ export function createRouter(deps: RouterDeps) {
       }),
       react: authed.threads.react.handler(async ({ context, input }) => {
         const target = await resolveThreadTarget(deps.prisma, context.actor, input);
-        const result = await reactToThreadMessage(deps, context.actor, target, input);
+        // Without a model or while teaching, the reaction is still saved; it just starts no turn.
+        const mayStartTurn =
+          !(await modelSetup(deps, context.actor)).needsModel &&
+          (target.kind !== "bot" ||
+            (await assertTeachingSendAllowed(deps.prisma, context.actor.spaceId, target.botId).then(
+              () => true,
+              () => false,
+            )));
+        const result = await reactToThreadMessage(
+          deps,
+          context.actor,
+          target,
+          { ...input, mayStartTurn },
+          target.kind === "bot"
+            ? (runId) => releaseComputerControl(deps, context.actor, target.botId, "done", runId)
+            : undefined,
+        );
         if (result.eventSeq != null) {
           await deps.events.notify(target.threadId, result.eventSeq).catch((error) => {
             getLogger().error("thread reaction realtime notification", error);
           });
         }
-        return { ok: true as const };
+        return { ok: true as const, runIds: result.runIds };
       }),
       stop: authed.threads.stop.handler(async ({ context, input }) => {
         const target = await resolveThreadTarget(deps.prisma, context.actor, input);
@@ -3224,6 +3318,10 @@ export function createRouter(deps: RouterDeps) {
               homeKey: bot.computer.homeKey,
               providerRef: bot.computer.providerRef,
               kind: bot.computer.kind,
+              runningSince: bot.computer.runningSince,
+              controlHolder: bot.computer.controlHolder,
+              controlLeaseId: bot.computer.controlLeaseId,
+              controlLeaseExpiresAt: bot.computer.controlLeaseExpiresAt,
             },
           ).catch(() => undefined);
         }
@@ -3410,7 +3508,8 @@ export function createRouter(deps: RouterDeps) {
         const modelId = input.modelId === undefined ? existing.modelId : input.modelId;
         const hasModel = Boolean(modelProvider && modelId);
         const modelChanged =
-          modelProvider !== existing.modelProvider || modelId !== existing.modelId;
+          canonicalPiProviderId(modelProvider ?? "") !==
+            canonicalPiProviderId(existing.modelProvider ?? "") || modelId !== existing.modelId;
         const touchesModel =
           input.modelProvider !== undefined ||
           input.modelId !== undefined ||
@@ -6155,15 +6254,18 @@ export function createRouter(deps: RouterDeps) {
           },
           orderBy: newestVoiceCredentialOrder,
         });
-        return rows.map((row) => {
-          const preference = row.preferences[0];
-          return toVoiceCredential({
-            ...row,
-            isDefault: preference?.isDefault ?? false,
-            voiceId: preference?.voiceId ?? "",
-            speechModel: preference?.speechModel ?? "",
-          });
-        });
+        return Promise.all(
+          rows.map(async (row) => {
+            const preference = row.preferences[0];
+            return toVoiceCredential({
+              ...row,
+              isDefault: preference?.isDefault ?? false,
+              voiceId: preference?.voiceId ?? "",
+              speechModel: preference?.speechModel ?? "",
+              server: await voiceCredentialServer(deps, context.actor, row),
+            });
+          }),
+        );
       }),
       connect: authed.voice.connect.handler(async ({ context, input }) =>
         persistVoiceCredential(deps, context.actor, {
@@ -6171,6 +6273,9 @@ export function createRouter(deps: RouterDeps) {
           plaintext: input.apiKey,
           voiceId: input.voiceId,
           speechModel: input.speechModel,
+          baseUrl: input.baseUrl,
+          ttsModel: input.ttsModel,
+          sttModel: input.sttModel,
           signal: context.signal,
         }),
       ),
@@ -6441,10 +6546,11 @@ async function meDto(deps: RouterDeps, actor: Actor): Promise<Me> {
     spaceId: actor.spaceId,
     isDeploymentOwner: actor.isDeploymentOwner,
     needsModel: setup.needsModel,
-    defaultProvider:
+    defaultProvider: canonicalPiProviderId(
       setup.credential?.provider ??
-      setup.settings?.defaultModelProvider ??
-      deps.env.defaultProvider,
+        setup.settings?.defaultModelProvider ??
+        deps.env.defaultProvider,
+    ),
     defaultModel:
       setup.credential?.defaultModel ?? setup.settings?.defaultModelId ?? deps.env.defaultModel,
     // Set only while the active default is the deployment's own, running on host credentials.
@@ -6458,6 +6564,7 @@ async function meDto(deps: RouterDeps, actor: Actor): Promise<Me> {
     canChooseHostComputer: actor.isDeploymentOwner && deps.env.sandboxProvider === "docker",
     sandboxProvider: deps.env.sandboxProvider,
     avatarStyle: user.avatarStyle === "robot" ? "robot" : "organic",
+    timezone: user.timezone ?? null,
     billingEnabled: Boolean(deps.billing) && !actor.isDeploymentOwner,
   };
 }
@@ -6493,8 +6600,9 @@ async function prepareAllowedThinkingLevels(
 ): Promise<{ allowed: string[] | undefined; secret?: { id: string; ciphertext: string } }> {
   if (provider !== OPENAI_COMPATIBLE_PROVIDER_ID) {
     return {
-      allowed: listPiCatalog().find((item) => item.provider === provider && item.id === modelId)
-        ?.thinkingLevels,
+      allowed: listPiCatalog().find(
+        (item) => item.provider === canonicalPiProviderId(provider) && item.id === modelId,
+      )?.thinkingLevels,
     };
   }
   let allowed: string[] | undefined = ["off"];
@@ -6798,7 +6906,9 @@ async function deploymentDto(prisma: PrismaClient, sandboxProvider: string) {
       ? settings.signupAllowlist.split(",").filter(Boolean)
       : [],
     hasDeploymentModelCredential: Boolean(settings?.deploymentModelCredentialCipher),
-    defaultProvider: settings?.defaultModelProvider ?? null,
+    defaultProvider: settings?.defaultModelProvider
+      ? canonicalPiProviderId(settings.defaultModelProvider)
+      : null,
     defaultModel: settings?.defaultModelId ?? null,
     computerHost: computerHostFor(settings?.computerHost, sandboxProvider),
     canChooseHostComputer: sandboxProvider === "docker",
@@ -6869,7 +6979,7 @@ async function persistModelCredential(
       async (tx) => {
         throwIfAborted(input.signal);
         const existing = await tx.userModelCredential.findFirst({
-          where: { userId: actor.userId, provider: input.provider },
+          where: { userId: actor.userId, provider: { in: storedPiProviderIds(input.provider) } },
           orderBy: newestModelCredentialOrder,
         });
         throwIfAborted(input.signal);
@@ -7010,7 +7120,7 @@ function mapRoutine(row: {
     webhookEnabled: row.webhookEnabled,
     githubEnabled: row.githubEnabled,
     messageProvider: row.messageProvider,
-    modelProvider: row.modelProvider ?? null,
+    modelProvider: row.modelProvider ? canonicalPiProviderId(row.modelProvider) : null,
     modelId: row.modelId ?? null,
     thinkingLevel: (row.thinkingLevel as Routine["thinkingLevel"]) ?? null,
     watch: parseRoutineWatch(row.watch),

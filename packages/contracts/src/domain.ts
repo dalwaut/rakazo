@@ -20,6 +20,24 @@ export const MemoryScopeSchema = z.enum(["isolated", "shared"]);
 export type MemoryScopeValue = z.infer<typeof MemoryScopeSchema>;
 
 export const AvatarStyleSchema = z.enum(["robot", "organic"]);
+
+/** True for an IANA timezone this runtime can format in, such as "Pacific/Auckland". */
+export function isValidTimeZone(value: string): boolean {
+  // Intl also accepts fixed offsets, which are not IANA timezone names.
+  if (/^[+-]/.test(value)) return false;
+  try {
+    new Intl.DateTimeFormat("en-US", { timeZone: value });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+export const TimeZoneSchema = z
+  .string()
+  .min(1)
+  .max(64)
+  .refine(isValidTimeZone, { message: "Unknown timezone" });
 export type AvatarStyle = z.infer<typeof AvatarStyleSchema>;
 
 export const ThinkingLevelSchema = z.enum([
@@ -1212,6 +1230,8 @@ export const ModelCatalogEntrySchema = z.object({
   signIn: ModelOAuthSignInModeSchema.optional(),
   reasoning: z.boolean().optional(),
   thinkingLevels: z.array(ThinkingLevelSchema).optional(),
+  /** The model reads images. Left out where a connection setting decides it. */
+  images: z.boolean().optional(),
   /** Catalog stand-in so a provider appears before the user enters a real model id. */
   placeholder: z.boolean().optional(),
   /** Models share one pinned HTTPS models-list URL that can be probed. */
@@ -1243,6 +1263,10 @@ export const VoiceCredentialSchema = z.object({
   /** Fish speech-model override. Empty uses the deployment default. */
   speechModel: z.string(),
   transcribe: z.boolean(),
+  /** Self-hosted server base URL and model ids (never the key). Empty for hosted providers. */
+  endpoint: z.string().default(""),
+  ttsModel: z.string().default(""),
+  sttModel: z.string().default(""),
 });
 export type VoiceCredential = z.infer<typeof VoiceCredentialSchema>;
 
@@ -1386,6 +1410,11 @@ export const MeSchema = z.object({
   canChooseHostComputer: z.boolean(),
   sandboxProvider: z.string(),
   avatarStyle: AvatarStyleSchema,
+  /**
+   * The user's IANA timezone, or null when unset (bots then see UTC only).
+   * Absent from servers that predate it.
+   */
+  timezone: z.string().nullable().optional(),
   /** True when this deployment bills and the user is not the deployment owner. */
   billingEnabled: z.boolean(),
 });
