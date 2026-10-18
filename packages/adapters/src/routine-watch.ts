@@ -407,9 +407,10 @@ async function readComputer(
     const relative = posix.relative(botFolder, resolved);
     // Inside the workspace, pass the path relative to the provider's working
     // directory so a desktop computer resolves it under its own home.
-    return mode !== "team" && (relative.startsWith("..") || posix.isAbsolute(relative))
-      ? resolved
-      : relative || ".";
+    const outside = relative === ".." || relative.startsWith("../");
+    if (mode !== "team" && (outside || posix.isAbsolute(relative))) return resolved;
+    // `./` keeps a name such as `-reports` from being read as a `find` option.
+    return !relative ? "." : outside ? relative : `./${relative}`;
   });
   const result = await run(
     deps,
@@ -428,8 +429,9 @@ async function readComputer(
   for (const line of result.stdout.split("\n")) {
     if (!line) continue;
     const [first, second, third] = line.split("\t");
-    if (first === "MISSING") missing.push(second ?? "");
-    else if (first) entries[first] = `${second}:${third}`;
+    // Paths went in as `./name`; report them as the bot wrote them.
+    if (first === "MISSING") missing.push((second ?? "").replace(/^\.\//, ""));
+    else if (first) entries[first.replace(/^\.\//, "")] = `${second}:${third}`;
   }
   if (missing.length) {
     throw new RoutineWatchError(`Nothing exists at ${missing.join(", ")}.`);

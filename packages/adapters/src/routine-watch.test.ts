@@ -444,12 +444,22 @@ describe("tickRoutineWatch on a computer", () => {
     expect(execute).toHaveBeenCalledWith(
       computer,
       {
-        argv: ["sh", "-c", FILES_SCRIPT, "watch", scope === "team" ? "." : "", "inbox"],
+        argv: ["sh", "-c", FILES_SCRIPT, "watch", scope === "team" ? "." : "", "./inbox"],
         cwd: scope === "team" ? "bots/bot-1" : undefined,
         timeoutMs: 60_000,
       },
       expect.anything(),
     );
+  });
+
+  it("passes a folder named like an option as a path", async () => {
+    const { deps, routine, execute } = setupComputer(
+      { kind: "files", paths: ["-reports"] },
+      { stdout: "./-reports/q3.md\t3\t1.25\n" },
+    );
+    const result = await checkRoutineWatch(deps, routine);
+    expect(result.state.entries).toEqual({ "-reports/q3.md": "3:1.25" });
+    expect(execute.mock.calls[0]?.[1].argv.at(-1)).toBe("./-reports");
   });
 
   it("runs a team desktop command in the provider-relative bot folder", async () => {
