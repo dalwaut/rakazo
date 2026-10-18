@@ -55,3 +55,62 @@ test("opening a bot in another space switches in place, without a page reload", 
   expect(await page.evaluate(() => window.localStorage.getItem("rakazo:space-id"))).toBe(space.id);
   await captureScreenshot(page, testInfo, "space-switch-in-place");
 });
+
+test("going back during a slow switch keeps the user where they went", async ({ page }) => {
+  const stamp = Date.now();
+  await signup(page, `space-switch-back-${stamp}@rakazo.test`, "password12", "Space Switcher");
+  await completeOnboarding(page);
+  const firstBot = new URL(page.url()).pathname;
+  const homeSpace = await page.evaluate(() => window.localStorage.getItem("rakazo:space-id"));
+  const helper = await page.request.post("/rpc/bots/create", {
+    data: {
+      json: {
+        name: "Helper",
+        title: "",
+        description: "",
+        notifyOnFinish: true,
+        computerMode: "team",
+      },
+    },
+  });
+  const { json: helperBot } = (await helper.json()) as { json: { id: string } };
+  const otherSpace = await page.request.post("/rpc/spaces/create", {
+    data: { json: { name: "Second space" } },
+  });
+  const { json: space } = (await otherSpace.json()) as { json: { id: string } };
+  await page.request.post("/rpc/bots/create", {
+    headers: { "x-rakazo-space-id": space.id },
+    data: {
+      json: {
+        name: "Scout",
+        title: "",
+        description: "",
+        notifyOnFinish: true,
+        computerMode: "team",
+      },
+    },
+  });
+  await page.reload();
+  await page
+    .getByRole("button", { name: /Helper/ })
+    .first()
+    .click();
+  await page.waitForURL(`**/app/${helperBot.id}`);
+
+  // Hold the other space's bootstrap until the user has gone back.
+  let release = () => {};
+  const held = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  await page.route("**/rpc/bootstrap", async (route) => {
+    if (route.request().headers()["x-rakazo-space-id"] === space.id) await held;
+    await route.continue();
+  });
+  await page.getByRole("button", { name: /Scout/ }).first().click();
+  await page.goBack();
+  await page.waitForURL(`**${firstBot}`);
+  release();
+  await page.waitForTimeout(1_000);
+  expect(new URL(page.url()).pathname).toBe(firstBot);
+  expect(await page.evaluate(() => window.localStorage.getItem("rakazo:space-id"))).toBe(homeSpace);
+});

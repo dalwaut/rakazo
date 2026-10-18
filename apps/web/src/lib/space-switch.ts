@@ -8,7 +8,9 @@ import { flushSync } from "react-dom";
  */
 let epoch = 0;
 const listeners = new Set<() => void>();
+/** Resolves the transition currently waiting for the new shell, if any. */
 let shellReady: (() => void) | null = null;
+let activeTransitions = 0;
 
 /** The longest the old screen is held while the new space's shell renders. */
 const READY_TIMEOUT_MS = 1_500;
@@ -26,15 +28,19 @@ export function useSpaceEpoch(): number {
 }
 
 /**
- * Remounts the shell for the newly selected space. Where the browser supports
- * view transitions, the old screen stays up until the new shell has its bots
- * and conversation, then crossfades to it, so nothing flashes empty.
+ * Remounts the shell for another space. `commit` selects the space and moves
+ * the route; it returns false to abandon the switch, and then nothing remounts.
+ * Where the browser supports view transitions, the old screen stays up until
+ * the new shell has its bots and conversation, then crossfades to it, so
+ * nothing flashes empty. `commit` runs after the old screen is captured, so the
+ * old shell keeps talking to its own space until then.
  */
-export function remountShellForSpace(update: () => void): void {
+export function remountShellForSpace(commit: () => boolean): void {
   const remount = () => {
-    update();
+    if (!commit()) return false;
     epoch += 1;
     for (const listener of listeners) listener();
+    return true;
   };
   const reducedMotion = window.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
   if (typeof document.startViewTransition !== "function" || reducedMotion) {
@@ -42,17 +48,26 @@ export function remountShellForSpace(update: () => void): void {
     return;
   }
   const root = document.documentElement;
+  activeTransitions += 1;
   root.classList.add(SWITCHING_CLASS);
   const transition = document.startViewTransition(async () => {
+    let resolveReady = () => {};
     const ready = new Promise<void>((resolve) => {
-      shellReady = resolve;
+      resolveReady = resolve;
       window.setTimeout(resolve, READY_TIMEOUT_MS);
     });
-    flushSync(remount);
-    await ready;
-    shellReady = null;
+    shellReady = resolveReady;
+    let remounted = false;
+    flushSync(() => {
+      remounted = remount();
+    });
+    if (remounted) await ready;
+    if (shellReady === resolveReady) shellReady = null;
   });
-  void transition.finished.finally(() => root.classList.remove(SWITCHING_CLASS));
+  void transition.finished.finally(() => {
+    activeTransitions -= 1;
+    if (activeTransitions === 0) root.classList.remove(SWITCHING_CLASS);
+  });
 }
 
 /** Called by the shell once its bots and conversation are on screen. */

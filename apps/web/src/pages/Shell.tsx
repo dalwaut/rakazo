@@ -1584,6 +1584,14 @@ function SpaceShell() {
   }, [bootstrapMe, botSections, bots, groups, spaces, query]);
 
   const spaceSwitchRequest = useRef(0);
+  useEffect(
+    () => () => {
+      // A switch still loading when this shell goes away (another page, or a
+      // newer switch) must not pull the user back to its space afterwards.
+      spaceSwitchRequest.current += 1;
+    },
+    [],
+  );
   const openSpaceChat = useCallback(
     (spaceId: string, path: string) => {
       setMobileSidebarOpen(false);
@@ -1605,18 +1613,36 @@ function SpaceShell() {
         reload();
         return;
       }
+      const startedAt = window.location.href;
+      const current = () =>
+        request === spaceSwitchRequest.current && window.location.href === startedAt;
       const primed = primeSpaceBootstrap(spaceId, target.botId);
       primed.then(
         () => {
-          if (request !== spaceSwitchRequest.current || !selectSpace(spaceId)) {
+          if (!current()) {
             discardPrimedBootstrap(primed);
             return;
           }
-          remountShellForSpace(() => navigate(path));
+          // A call started while the bootstrap loaded belongs to this space.
+          if (getCallSnapshot()) {
+            discardPrimedBootstrap(primed);
+            reload();
+            return;
+          }
+          remountShellForSpace(() => {
+            if (!current() || getCallSnapshot() || !selectSpace(spaceId)) {
+              discardPrimedBootstrap(primed);
+              return false;
+            }
+            // Playback belongs to the conversation being left.
+            speaker.stop();
+            navigate(path);
+            return true;
+          });
         },
         () => {
           discardPrimedBootstrap(primed);
-          if (request === spaceSwitchRequest.current) reload();
+          if (current()) reload();
         },
       );
     },
