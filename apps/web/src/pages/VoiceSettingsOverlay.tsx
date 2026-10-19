@@ -19,7 +19,7 @@ import {
 } from "@rakazo/ui-web";
 import { XIcon } from "lucide-react";
 import { useEffect, useId, useMemo, useRef, useState } from "react";
-import { useSpaceRpc } from "../lib/space-rpc";
+import { useBoundSpaceId, useSpaceRpc } from "../lib/space-rpc";
 import { errorText } from "../lib/user-error";
 
 export function VoiceSettingsOverlay({
@@ -33,6 +33,7 @@ export function VoiceSettingsOverlay({
   onBusyChange?: (busy: boolean) => void;
 }) {
   const rpc = useSpaceRpc();
+  const spaceId = useBoundSpaceId();
   const { t } = useLingui();
   const apiKeyId = useId();
   const voiceSelectId = useId();
@@ -198,7 +199,7 @@ export function VoiceSettingsOverlay({
     markPending("test");
     try {
       const { speaker } = await import("../lib/tts.js");
-      await speaker.speak(t`Hi, this is how I'll sound when I read replies out loud.`);
+      await speaker.speak(t`Hi, this is how I'll sound when I read replies out loud.`, { spaceId });
       if (speaker.state.error) {
         setError(speaker.state.error);
         return;

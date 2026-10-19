@@ -176,3 +176,44 @@ it("never hands one space's memory config to another space's panel", async () =>
     await cleanup();
   }
 });
+
+it("withholds memory connection controls after a failed load and retries the edited space", async () => {
+  memoryConfigs.length = 0;
+  providerConfig.mockReset();
+  providerConfig.mockRejectedValueOnce(new Error("Memory service unavailable"));
+  let resolveRetry: (config: unknown) => void = () => undefined;
+  providerConfig.mockImplementationOnce(
+    () =>
+      new Promise((resolve) => {
+        resolveRetry = resolve;
+      }),
+  );
+  const onMemoryConfigChange = vi.fn();
+  const { container, cleanup } = await render({
+    space: spaces[1],
+    currentSpaceId: "space-a",
+    initialSection: "memory",
+    onMemoryConfigChange,
+  });
+  try {
+    expect(container.textContent).toContain("Memory service unavailable");
+    expect(memoryConfigs).not.toContain(null);
+    const rendersBeforeRetry = memoryConfigs.length;
+    const retry = [...container.querySelectorAll("button")].find(
+      (button) => button.textContent === "Retry",
+    );
+    expect(retry).toBeDefined();
+    await act(async () => retry?.click());
+    expect(container.textContent).not.toContain("Memory service unavailable");
+    expect(memoryConfigs.length).toBeGreaterThan(rendersBeforeRetry);
+    expect(memoryConfigs.at(-1)).toBeUndefined();
+    expect(providerConfig.mock.calls.map(([spaceId]) => spaceId)).toEqual(["space-b", "space-b"]);
+    const config = { provider: "mem0", defaultMemoryScope: "shared" };
+    await act(async () => resolveRetry(config));
+    expect(memoryConfigs.at(-1)).toBe(config);
+    expect(container.textContent).not.toContain("Retry");
+    expect(onMemoryConfigChange).not.toHaveBeenCalled();
+  } finally {
+    await cleanup();
+  }
+});

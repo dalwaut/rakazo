@@ -4024,6 +4024,7 @@ msgstr "Restauration de votre espace de travail"
 #: src/components/AccountAccess.tsx
 #: src/pages/Auth.tsx
 #: src/pages/ModelBackupsSettings.tsx
+#: src/pages/SettingsOverlay.tsx
 msgid "Retry"
 msgstr "Réessayer"
 

@@ -20,6 +20,7 @@ import { computersAreUnavailable } from "../components/ComputersUnavailableHint"
 import { ListboxSelect } from "../components/ListboxSelect";
 import { rpcForSpace } from "../lib/rpc";
 import { SpaceRpcProvider } from "../lib/space-rpc";
+import { errorText } from "../lib/user-error";
 import {
   ComputerSettingsPanel,
   GeneralSettingsPanels,
@@ -128,10 +129,14 @@ export function SettingsOverlay({
   // The shell only holds the selected space's memory config; another space's loads here.
   const otherSpace = Boolean(spaceId && currentSpaceId && spaceId !== currentSpaceId);
   // Kept with the space it was loaded for, so a switch never shows the previous space's config.
-  const [otherMemory, setOtherMemory] = useState<{
-    spaceId: string;
-    config: SpaceMemoryConfig | null;
-  }>();
+  const [otherMemory, setOtherMemory] = useState<
+    { spaceId: string } & (
+      | { config: SpaceMemoryConfig | null; error?: never }
+      | { config?: never; error: string }
+    )
+  >();
+  const [memoryLoadAttempt, setMemoryLoadAttempt] = useState(0);
+  const otherMemoryError = otherMemory?.spaceId === spaceId ? otherMemory.error : undefined;
   const otherMemoryConfig = otherMemory?.spaceId === spaceId ? otherMemory.config : undefined;
   const setOtherMemoryConfig = useCallback(
     (config: SpaceMemoryConfig | null) => {
@@ -142,18 +147,19 @@ export function SettingsOverlay({
   useEffect(() => {
     if (section !== "memory" || !otherSpace || !spaceId) return;
     let cancelled = false;
+    setOtherMemory(undefined);
     rpcForSpace(spaceId)
       .memory.providerConfig()
       .then((config) => {
         if (!cancelled) setOtherMemory({ spaceId, config });
       })
-      .catch(() => {
-        if (!cancelled) setOtherMemory({ spaceId, config: null });
+      .catch((err: unknown) => {
+        if (!cancelled) setOtherMemory({ spaceId, error: errorText(err) });
       });
     return () => {
       cancelled = true;
     };
-  }, [section, otherSpace, spaceId]);
+  }, [section, otherSpace, spaceId, memoryLoadAttempt]);
   const releaseComputerRecovery = useCallback(() => {
     window.clearTimeout(recoveryHoldTimer.current);
     recoveryHoldTimer.current = undefined;
@@ -366,7 +372,17 @@ export function SettingsOverlay({
                 {section === "models" ? (
                   <ModelSettingsOverlay embedded onClose={requestClose} />
                 ) : null}
-                {section === "memory" ? (
+                {section === "memory" && otherSpace && otherMemoryError ? (
+                  <div className="px-6 py-6 sm:px-8">
+                    <p className="mb-4 text-sm text-destructive">{otherMemoryError}</p>
+                    <Button
+                      variant="outline"
+                      onClick={() => setMemoryLoadAttempt((attempt) => attempt + 1)}
+                    >
+                      {t`Retry`}
+                    </Button>
+                  </div>
+                ) : section === "memory" ? (
                   <MemorySettingsOverlay
                     embedded
                     onClose={requestClose}
