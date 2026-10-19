@@ -117,6 +117,11 @@ export function sidebarGroupsForSpaces<TBot extends SidebarChat, TGroup extends 
           spaceName: space.name,
           ...spaceHeaderMenu(space, false),
         }));
+    // A lone space is the selected one, so its settings stay in the account menu too.
+    const lone = !showSpaceNames && !space.canRename && !space.canDelete;
+    if (lone && (needle || emptySections.length > 0)) {
+      return emptySections;
+    }
     return [
       {
         key: showSpaceNames ? `space:${space.id}:empty` : `space:${space.id}:actions`,

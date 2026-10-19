@@ -766,6 +766,13 @@ function SpaceShell() {
   const [settingsSpaceId, setSettingsSpaceId] = useState<string | null>(null);
   const settingsSpace =
     spaces.find((space) => space.id === (settingsSpaceId ?? currentSpaceId)) ?? null;
+  // Never fall back to another space's settings when the edited space goes away.
+  const settingsSpaceGone = settingsSpaceId !== null && !settingsSpace;
+  useEffect(() => {
+    if (!settingsSpaceGone) return;
+    setSettingsOpen(false);
+    setSettingsSpaceId(null);
+  }, [settingsSpaceGone]);
   const [keepComputerRecovery, setKeepComputerRecovery] = useState(false);
   const recoveryHoldTimer = useRef<number | undefined>(undefined);
   const showComputerRecoveryHint =
@@ -4962,7 +4969,7 @@ function SpaceShell() {
       </Suspense>
 
       <Suspense fallback={null}>
-        {settingsOpen ? (
+        {settingsOpen && !settingsSpaceGone ? (
           <SettingsOverlay
             space={settingsSpace}
             spaces={spaces}
