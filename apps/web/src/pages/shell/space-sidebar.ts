@@ -24,6 +24,8 @@ function spaceHeaderMenu(space: { canRename?: boolean; canDelete?: boolean }, ho
   return {
     canRenameSpace: hostsMenu && space.canRename === true,
     canDeleteSpace: hostsMenu && space.canDelete === true,
+    // Every member can open a space's settings, so the menu does not depend on rename or delete.
+    canOpenSpaceSettings: hostsMenu,
   };
 }
 
@@ -115,9 +117,6 @@ export function sidebarGroupsForSpaces<TBot extends SidebarChat, TGroup extends 
           spaceName: space.name,
           ...spaceHeaderMenu(space, false),
         }));
-    if (!showSpaceNames && space.canRename !== true && space.canDelete !== true) {
-      return emptySections;
-    }
     return [
       {
         key: showSpaceNames ? `space:${space.id}:empty` : `space:${space.id}:actions`,
