@@ -1,0 +1,226 @@
+# repo-bot-kit: the coder. Works only on what Dallas let in:
+#   an issue labelled `agent:go`, an owner comment `agent:go` or `@claude ...`, or a
+#   dispatch from bot-review asking for a fix round.
+# It never merges: it has no gh tool, and the workflow (not the model) pushes,
+# opens the PR, and hands it to bot-review.
+name: bot-coder
+on:
+  issues:
+    types: [labeled]
+  issue_comment:
+    types: [created]
+  workflow_dispatch:
+    inputs:
+      pr:
+        description: PR number to run a fix round on
+        required: true
+permissions:
+  contents: write
+  pull-requests: write
+  issues: write
+  actions: write
+  id-token: write
+concurrency:
+  group: bot-coder-${{ github.event.issue.number || inputs.pr }}
+  cancel-in-progress: false
+jobs:
+  code:
+    if: >-
+      (github.event_name == 'issues' && github.event.label.name == 'agent:go') ||
+      github.event_name == 'workflow_dispatch' ||
+      (github.event_name == 'issue_comment' &&
+       github.event.comment.user.login == github.repository_owner &&
+       (contains(github.event.comment.body, '@claude') || github.event.comment.body == 'agent:go'))
+    runs-on: [self-hosted, opai-server]
+    timeout-minutes: 75
+    env:
+      GH_TOKEN: ${{ github.token }}
+      DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Trusted copy of the bot scripts (from the default branch)
+        env:
+          BOT_ENV_VAL: ${{ vars.BOT_ENV }}
+        run: |
+          gfetch() { git -c http.https://github.com/.extraheader="AUTHORIZATION: basic $(printf 'x-access-token:%s' "$GH_TOKEN" | base64 -w0)" fetch -q origin "$@"; }
+          BOT="$RUNNER_TEMP/bot"; echo "BOT=$BOT" >> "$GITHUB_ENV"
+          mkdir -p "$BOT"
+          gfetch "+refs/heads/$DEFAULT_BRANCH:refs/remotes/origin/$DEFAULT_BRANCH"
+          for f in resolve.sh context.sh prepare.sh check.sh lint-baseline; do
+            git show "origin/$DEFAULT_BRANCH:.github/bot/$f" > "$BOT/$f" 2>/dev/null \
+              || git show "HEAD:.github/bot/$f" > "$BOT/$f"   # bootstrap: kit not on the default branch yet
+          done
+          chmod +x "$BOT"/*.sh
+          printf '%s\n' "$BOT_ENV_VAL" > "$BOT/bot.env"
+          echo "BOT_ENV_FILE=$BOT/bot.env" >> "$GITHUB_ENV"
+          echo "BOT_BASELINE_FILE=$BOT/lint-baseline" >> "$GITHUB_ENV"
+
+      - id: ctx
+        name: Decide the job
+        env:
+          EVENT: ${{ github.event_name }}
+          ISSUE_NUM: ${{ github.event.issue.number }}
+          IS_PR: ${{ github.event.issue.pull_request != null }}
+          INPUT_PR: ${{ inputs.pr }}
+          MAX_OPEN: ${{ vars.BOT_MAX_OPEN_PRS || '5' }}
+          MAX_ROUNDS: ${{ vars.BOT_MAX_ROUNDS || '5' }}
+        run: '"$BOT/resolve.sh"'
+
+      - name: Check out the work branch
+        if: steps.ctx.outputs.skip == 'false'
+        env:
+          MODE: ${{ steps.ctx.outputs.mode }}
+          BRANCH: ${{ steps.ctx.outputs.branch }}
+        run: |
+          gfetch() { git -c http.https://github.com/.extraheader="AUTHORIZATION: basic $(printf 'x-access-token:%s' "$GH_TOKEN" | base64 -w0)" fetch -q origin "$@"; }
+          if [ "$MODE" = issue ]; then
+            git checkout -q -B "$BRANCH" "origin/$DEFAULT_BRANCH"
+          else
+            gfetch "+refs/heads/$BRANCH:refs/remotes/origin/$BRANCH"
+            git checkout -q -B "$BRANCH" "origin/$BRANCH"
+            # bring the PR up to date so the coder works on what would land
+            git -c user.name="repo-bot" -c user.email="41898282+github-actions[bot]@users.noreply.github.com" \
+              merge -q --no-edit "origin/$DEFAULT_BRANCH" || { git merge --abort; echo "merge with $DEFAULT_BRANCH conflicts; the coder resolves it"; }
+          fi
+          echo ".bot-context.md" >> .git/info/exclude
+
+      - uses: actions/setup-node@v4
+        if: steps.ctx.outputs.skip == 'false' && hashFiles('package.json') != ''
+        with:
+          node-version: ${{ vars.BOT_NODE_VERSION || '22' }}
+
+      - name: Prepare
+        if: steps.ctx.outputs.skip == 'false'
+        run: |
+          GH_TOKEN='' "$BOT/prepare.sh"   # PR-controlled code runs with no GitHub token
+          mkdir -p .github/bot && cp "$BOT/check.sh" .github/bot/check.sh
+          "$BOT/context.sh" "${{ steps.ctx.outputs.mode }}" "${{ steps.ctx.outputs.number }}" "$DEFAULT_BRANCH" > .bot-context.md
+
+      - id: claude
+        if: steps.ctx.outputs.skip == 'false'
+        uses: anthropics/claude-code-action@v1
+        env:
+          GH_TOKEN: ""
+        with:
+          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          github_token: ${{ github.token }}
+          # review and coder dispatch each other as github-actions; no other bot is allowed
+          allowed_bots: github-actions
+          prompt: |
+            You are the coder bot for ${{ github.repository }}. Read AGENTS.md first and follow it.
+            Your job: ${{ steps.ctx.outputs.mode == 'issue' && format('implement issue #{0}', steps.ctx.outputs.issue) || format('run a fix round on PR #{0}: address the latest bot-review findings (blocker and major) and any comment from {1} since the last push', steps.ctx.outputs.number, github.repository_owner) }}.
+            Everything you need from GitHub is in `.bot-context.md` (issue, comments, reviews). You have no GitHub CLI.
+
+            Rules:
+            - Edit files only. Do NOT commit, push, or touch `.github/`; the workflow commits for you.
+            - Keep the change as small as the task allows. Match the surrounding code.
+            - Run `.github/bot/check.sh` before you finish. It must end with CHECK_RESULT=pass.
+              Lint errors may not exceed the baseline it prints; fewer is welcome.
+            - Review findings can be wrong. Fix the valid ones; for a wrong one, say why in your summary.
+            - If the task needs a decision only the owner can make (product, copy, money, data, design
+              direction), stop and return status "blocked" with ONE short question and 2-4 options.
+            - If nothing needs changing, return status "no_change" and say why.
+          claude_args: |
+            --model ${{ steps.ctx.outputs.model }}
+            --max-turns ${{ vars.BOT_CODER_MAX_TURNS || '150' }}
+            --allowedTools "Read,Edit,Write,Glob,Grep,Bash(.github/bot/check.sh),Bash(git diff:*),Bash(git status:*),Bash(git log:*),Bash(git show:*),Bash(ls:*),Bash(npx eslint:*),Bash(npx tsc:*)"
+            --json-schema '{"type":"object","properties":{"status":{"type":"string","enum":["done","blocked","no_change"]},"summary":{"type":"string"},"commit_message":{"type":"string"},"pr_title":{"type":"string"},"question":{"type":"string"},"options":{"type":"array","items":{"type":"string"}}},"required":["status","summary"]}'
+
+      # Runs even if the claude step failed (turn limit, error): the gate below re-checks
+      # the work itself, so finished work that passes still ships.
+      - name: Gate, commit, push, hand to review
+        if: "!cancelled() && steps.ctx.outputs.skip == 'false'"
+        env:
+          OUT: ${{ steps.claude.outputs.structured_output }}
+          MODE: ${{ steps.ctx.outputs.mode }}
+          NUM: ${{ steps.ctx.outputs.number }}
+          ISSUE: ${{ steps.ctx.outputs.issue }}
+          BRANCH: ${{ steps.ctx.outputs.branch }}
+          OWNER: ${{ github.repository_owner }}
+        run: |
+          set -euo pipefail
+          # undo the trusted check.sh copied in for the model (untracked on branches older than the kit)
+          if [ -n "$(git ls-files .github/bot)" ]; then git checkout -q -- .github/bot/check.sh; else rm -rf .github/bot; rmdir .github 2>/dev/null || true; fi
+          if [ -z "${OUT:-}" ]; then
+            if git diff --quiet && [ -z "$(git ls-files --others --exclude-standard)" ]; then
+              OUT='{"status":"blocked","summary":"The coder run ended without a result or any change (turn limit or error). See the workflow log."}'
+            else
+              OUT='{"status":"done","summary":"The coder stopped before reporting (turn limit or error). What it finished is below; the check decides whether it ships."}'
+            fi
+          fi
+          status=$(jq -r '.status // "blocked"' <<<"$OUT")
+          summary=$(jq -r '.summary // "The coder returned no summary."' <<<"$OUT")
+          target=$([ "$MODE" = pr ] && echo "$NUM" || echo "$ISSUE")
+          ask() {  # one question, routed to the digest
+            gh issue edit "$target" --add-label needs-human >/dev/null
+            gh issue comment "$target" --body "<!-- bot-question -->
+          @$OWNER $1"
+            exit 0
+          }
+
+          if [ "$status" = blocked ]; then
+            q=$(jq -r '.question // "Needs your direction."' <<<"$OUT")
+            opts=$(jq -r '(.options // []) | to_entries | map("\(.key+1). \(.value)") | join("\n")' <<<"$OUT")
+            ask "**Question:** $q
+          $opts
+
+          Reply with \`@claude <answer>\` and the coder carries on.
+
+          <details><summary>Where it got to</summary>
+
+          $summary
+          </details>"
+          fi
+          if git diff --quiet && [ -z "$(git ls-files --others --exclude-standard)" ]; then
+            [ "$MODE" = pr ] && gh pr comment "$NUM" --body "<!-- bot-note --> Coder made no change: $summary" || gh issue comment "$ISSUE" --body "<!-- bot-note --> Coder made no change: $summary"
+            exit 0
+          fi
+          if git status --porcelain | awk '{print $2}' | grep -q '^\.github/'; then
+            git checkout -q -- .github; git clean -fdq .github
+            ask "The coder tried to change \`.github/\` (workflows or bot scripts). Bots may not edit their own rules; nothing was pushed. Summary: $summary"
+          fi
+
+          log=$(mktemp)
+          if ! GH_TOKEN='' "$BOT/check.sh" >"$log" 2>&1; then
+            ask "The coder could not get the check green, so nothing was pushed.
+
+          \`\`\`
+          $(tail -n 30 "$log")
+          \`\`\`
+          Comment \`@claude <direction>\` to retry, or take it over."
+          fi
+          errors=$(grep -oE '^LINT_ERRORS=[0-9]+' "$log" | cut -d= -f2)
+          if [ -n "$errors" ] && [ "$errors" -lt "$(cat "$BOT/lint-baseline")" ]; then
+            echo "$errors" > .github/bot/lint-baseline   # ratchet down
+          fi
+
+          msg=$(jq -r '.commit_message // empty' <<<"$OUT"); [ -z "$msg" ] && msg="bot: ${summary:0:72}"
+          git -c user.name="repo-bot" -c user.email="41898282+github-actions[bot]@users.noreply.github.com" add -A
+          git -c user.name="repo-bot" -c user.email="41898282+github-actions[bot]@users.noreply.github.com" commit -q -m "$msg"
+          # issue mode starts fresh from the default branch; the bot owns bot/* branches, so a
+          # leftover branch from a run that failed before opening its PR is overwritten
+          force=$([ "$MODE" = issue ] && echo --force || true)
+          git push -q $force "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" "HEAD:$BRANCH"
+
+          if [ "$MODE" = issue ]; then
+            title=$(jq -r '.pr_title // empty' <<<"$OUT"); [ -z "$title" ] && title=$(gh issue view "$ISSUE" --json title --jq .title)
+            url=$(gh pr create --base "$DEFAULT_BRANCH" --head "$BRANCH" --title "$title" --label bot \
+              --body "Closes #$ISSUE
+
+          $summary
+
+          _Opened by bot-coder. bot-review runs next; you're only pinged when it's ready to merge or needs you._")
+            NUM=$(basename "$url")
+          else
+            gh pr comment "$NUM" --body "<!-- bot-note --> Fix round pushed: $summary"
+          fi
+          gh workflow run bot-review.yml --ref "$DEFAULT_BRANCH" -f pr="$NUM"
+          # our push and PR also queue pull_request runs that wait for approval; review comes
+          # from the dispatch above, so remove them before they show an "approve" banner
+          sleep 10
+          gh run list --workflow bot-review.yml --status action_required --json databaseId --jq '.[].databaseId' \
+            | xargs -r -n1 gh run delete || true

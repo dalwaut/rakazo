@@ -17,3 +17,27 @@
 - For UI changes, link the CI E2E screenshot that shows the change on the PR; add the web test that opens that screen if it is missing. For native-only mobile UI that CI cannot capture, say so in the PR instead of linking an unrelated web screenshot.
 - UI system. Colors live in `@rakazo/ui-tokens` as semantic tokens (background, card, muted, border, primary, destructive, ...) with one TypeScript source that generates `tokens.css`; never hardcode a product hex or use `[var(--…)]` arbitrary values. Web and Electron use shadcn/ui on Base UI, vendored into `packages/ui-web` via `pnpm exec shadcn add` from the official registry only (third-party registries are a supply-chain risk); reuse those components before writing chrome by hand, and reuse `apps/web/src/components/ai/` for AI moments (loading, shimmer, success). The app is monochrome: primary is ink, status colors are destructive/success/warning, bots carry the only identity color. Mobile is native-first: Expo Router, Expo UI, native sheets, menus, alerts and pickers wherever one exists; custom surfaces (thread, composer, avatars, cards) use plain StyleSheet with the shared tokens through `apps/mobile/lib/appearance`, and system chrome stays PlatformColor via `lib/native`. Mobile may diverge from web when the native pattern is better.
 - On mobile, use built-in native iOS controls (@expo/ui SwiftUI and Liquid Glass, native header items, context menus, alerts, pickers, and switches) wherever possible instead of custom React Native pills or buttons.
+
+<!-- BEGIN:repo-bot-kit -->
+## Bot team (repo-bot-kit)
+
+This repo is worked by bots on GitHub. The owner only answers questions and merges.
+
+- **Ways in:** an issue labelled `agent:go` (add `hard` for Opus), an owner comment `agent:go`, or a comment
+  `@claude <instruction>` from the owner on an issue or PR. Nothing else starts the coder.
+- **The loop:** bot-coder edits on `bot/issue-<n>` → the workflow runs
+  `.github/bot/check.sh` and pushes → bot-review reviews → a `fix` verdict sends it
+  back to the coder, at most `BOT_MAX_ROUNDS` (5) times → `ready-for-merge` and one
+  ping to the owner.
+- **Bots never merge, never edit `.github/`, and never weaken the check.** The
+  workflows run the copy of `.github/bot/` from the default branch.
+- **The gate:** `.github/bot/check.sh` must end `CHECK_RESULT=pass`: the build
+  passes, and lint errors stay at or below `.github/bot/lint-baseline`. When a PR
+  lowers the count, the workflow lowers the baseline.
+- **Ask, don't guess:** product, copy, design, money or data decisions go back as
+  ONE question with options (`needs-human`). They show up in the pinned
+  "🤖 Decisions needed" issue.
+- **Public-safe text:** commit messages, PR bodies and comments name no secrets,
+  tokens, hostnames or personal data.
+- **Local sessions** taking their own PR to green: use `.agents/skills/pr-watch`.
+<!-- END:repo-bot-kit -->

@@ -1,0 +1,88 @@
+# repo-bot-kit: the scout. Weekly, gathers deterministic facts (audit, outdated
+# majors, lint, build warnings, TODOs). The model only runs when those facts
+# changed since the last scout run, and proposes at most 3 issues. Proposals
+# wait for the owner's `agent:go`.
+name: bot-scout
+on:
+  schedule:
+    - cron: "0 12 * * 1"
+  workflow_dispatch: {}
+permissions:
+  contents: read
+  issues: write
+  id-token: write
+jobs:
+  scout:
+    runs-on: [self-hosted, opai-server]
+    timeout-minutes: 40
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        if: hashFiles('package.json') != ''
+        with:
+          node-version: ${{ vars.BOT_NODE_VERSION || '22' }}
+      - name: Facts
+        env:
+          BOT_ENV_VAL: ${{ vars.BOT_ENV }}
+        run: |
+          printf '%s\n' "$BOT_ENV_VAL" > "$RUNNER_TEMP/bot.env"
+          export BOT_ENV_FILE="$RUNNER_TEMP/bot.env"
+          printf '.bot-facts.md\n.bot-open.md\n' >> .git/info/exclude
+          GH_TOKEN='' .github/bot/prepare.sh
+          GH_TOKEN='' .github/bot/facts.sh > .bot-facts.md 2>&1 || true
+          # the hash ignores HEAD so a commit that changes no fact does not wake the model
+          echo "FACTS_HASH=$(sed '1,2d' .bot-facts.md | sha256sum | cut -c1-16)" >> "$GITHUB_ENV"
+          gh issue list --state open --limit 200 --json number,title --jq '.[] | "- #\(.number) \(.title)"' > .bot-open.md
+      - id: seen
+        uses: actions/cache/restore@v4
+        with:
+          path: .bot-facts.md
+          key: bot-scout-${{ env.FACTS_HASH }}
+          lookup-only: true
+      - id: claude
+        if: steps.seen.outputs.cache-hit != 'true'
+        uses: anthropics/claude-code-action@v1
+        env:
+          GH_TOKEN: ""
+        with:
+          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          github_token: ${{ github.token }}
+          prompt: |
+            You are the scout for ${{ github.repository }}. Read AGENTS.md, `.bot-facts.md` (audit,
+            outdated majors, lint, build warnings, TODOs) and `.bot-open.md` (open issues).
+            Propose at most 3 issues worth doing, most valuable first. Skip anything already open.
+            Each needs: title, why it matters (1-2 sentences), what done looks like, effort (s|m|l),
+            type (bug|feature|chore). Prefer small, safe, verifiable work. Return an empty list if
+            nothing is worth a ticket.
+          claude_args: |
+            --model ${{ vars.BOT_SCOUT_MODEL || 'sonnet' }}
+            --max-turns 30
+            --allowedTools "Read,Glob,Grep"
+            --json-schema '{"type":"object","properties":{"issues":{"type":"array","maxItems":3,"items":{"type":"object","properties":{"title":{"type":"string"},"why":{"type":"string"},"done":{"type":"string"},"effort":{"type":"string","enum":["s","m","l"]},"type":{"type":"string","enum":["bug","feature","chore"]}},"required":["title","why","done","type"]}}},"required":["issues"]}'
+      - name: File proposals
+        if: steps.seen.outputs.cache-hit != 'true'
+        env:
+          OUT: ${{ steps.claude.outputs.structured_output }}
+        run: |
+          set -euo pipefail
+          [ -n "${OUT:-}" ] || exit 0
+          jq -c '.issues[]' <<<"$OUT" | while read -r i; do
+            gh issue create --title "$(jq -r .title <<<"$i")" --label scout --label "$(jq -r .type <<<"$i")" \
+              --body "<!-- bot-scout -->
+          $(jq -r .why <<<"$i")
+
+          **Done when:** $(jq -r .done <<<"$i")
+          **Effort:** $(jq -r '.effort // "?"' <<<"$i")
+
+          _Proposed by bot-scout. Add \`agent:go\` to have the coder do it, or close it._"
+          done
+      - name: Remember these facts
+        if: steps.seen.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: .bot-facts.md
+          key: bot-scout-${{ env.FACTS_HASH }}

@@ -1,0 +1,43 @@
+# repo-bot-kit: the digest. Once a day, rewrites ONE pinned "Decisions needed"
+# issue and @mentions the owner only when something waits and it changed since
+# yesterday, so the GitHub app pushes at most one notification a day.
+name: bot-digest
+on:
+  schedule:
+    - cron: "0 11 * * *"
+  workflow_dispatch: {}
+permissions:
+  contents: read
+  issues: write
+  pull-requests: read
+  actions: read
+jobs:
+  digest:
+    runs-on: [self-hosted, opai-server]
+    timeout-minutes: 10
+    env:
+      GH_TOKEN: ${{ github.token }}
+      OWNER: ${{ github.repository_owner }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Update the pinned digest
+        run: |
+          set -euo pipefail
+          .github/bot/digest.sh > "$RUNNER_TEMP/digest.md" 3> "$RUNNER_TEMP/count"
+          . "$RUNNER_TEMP/count"
+          num=$(gh issue list --state open --label bot-digest --json number --jq '.[0].number // empty')
+          if [ -z "$num" ]; then
+            url=$(gh issue create --title "🤖 Decisions needed" --label bot-digest --body-file "$RUNNER_TEMP/digest.md")
+            num=$(basename "$url"); gh issue pin "$num" || true
+            old=""
+          else
+            old=$(gh issue view "$num" --json body --jq .body | sed '1,2d')
+            gh issue edit "$num" --body-file "$RUNNER_TEMP/digest.md" >/dev/null
+          fi
+          new=$(sed '1,2d' "$RUNNER_TEMP/digest.md")
+          if [ "$COUNT" -gt 0 ] && [ "$new" != "$old" ]; then
+            gh issue comment "$num" --body "<!-- bot-digest-ping --> @$OWNER $COUNT item(s) need you today: #$num"
+          fi
+          echo "count=$COUNT issue=#$num"

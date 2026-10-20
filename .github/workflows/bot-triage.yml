@@ -1,0 +1,72 @@
+# repo-bot-kit: triage. Labels each new issue, flags duplicates, and asks ONE
+# question when the issue is too vague to act on. It never adds `agent:go`.
+name: bot-triage
+on:
+  issues:
+    types: [opened]
+  workflow_dispatch:
+    inputs:
+      issue:
+        description: Issue number to triage again
+        required: true
+permissions:
+  contents: read
+  issues: write
+  id-token: write
+jobs:
+  triage:
+    if: "!contains(github.event.issue.labels.*.name, 'scout') && !contains(github.event.issue.labels.*.name, 'bot-digest')"
+    runs-on: [self-hosted, opai-server]
+    timeout-minutes: 15
+    env:
+      GH_TOKEN: ${{ github.token }}
+      N: ${{ github.event.issue.number || inputs.issue }}
+      OWNER: ${{ github.repository_owner }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Context
+        run: |
+          echo ".bot-context.md" >> .git/info/exclude
+          { gh issue view "$N" --json number,title,body --jq '"## New issue #\(.number): \(.title)\n\n\(.body)\n"'
+            echo "## Other open and recently closed issues"
+            gh issue list --state all --limit 150 --json number,title,state,labels \
+              --jq '.[] | "- #\(.number) [\(.state)] \(.title) {\([.labels[].name]|join(","))}"' | { grep -v "^- #$N " || true; } ; } > .bot-context.md
+      - id: claude
+        uses: anthropics/claude-code-action@v1
+        env:
+          GH_TOKEN: ""
+        with:
+          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          github_token: ${{ github.token }}
+          prompt: |
+            You triage new issues for ${{ github.repository }}. Read `.bot-context.md` (the new issue and
+            the issue list) and skim the code if it helps place the issue.
+            Return: type (bug|feature|chore|question), duplicate_of (an issue number if it clearly
+            repeats one, else 0), clear (true if a coder could start without asking anything),
+            question (if not clear: ONE short question for the reporter), and a one-line summary.
+          claude_args: |
+            --model ${{ vars.BOT_TRIAGE_MODEL || 'haiku' }}
+            --max-turns 12
+            --allowedTools "Read,Glob,Grep"
+            --json-schema '{"type":"object","properties":{"type":{"type":"string","enum":["bug","feature","chore","question"]},"duplicate_of":{"type":"integer"},"clear":{"type":"boolean"},"question":{"type":"string"},"summary":{"type":"string"}},"required":["type","clear","summary"]}'
+      - name: Apply
+        env:
+          OUT: ${{ steps.claude.outputs.structured_output }}
+        run: |
+          set -euo pipefail
+          [ -n "${OUT:-}" ] || exit 0
+          gh issue edit "$N" --add-label "$(jq -r .type <<<"$OUT")" >/dev/null
+          dup=$(jq -r '.duplicate_of // 0' <<<"$OUT")
+          if [ "$dup" != 0 ] && [ "$dup" != "$N" ]; then
+            gh issue edit "$N" --add-label duplicate >/dev/null
+            gh issue comment "$N" --body "<!-- bot-question --> @$OWNER Looks like a duplicate of #$dup. Close this one, or add \`agent:go\` if it's different."
+            exit 0
+          fi
+          if [ "$(jq -r .clear <<<"$OUT")" != true ]; then
+            gh issue edit "$N" --add-label needs-human >/dev/null
+            gh issue comment "$N" --body "<!-- bot-question --> @$OWNER **Question before a bot can start:** $(jq -r '.question // "What should done look like?"' <<<"$OUT")"
+          else
+            gh issue comment "$N" --body "<!-- bot-note --> Triage: **$(jq -r .type <<<"$OUT")**. $(jq -r .summary <<<"$OUT") Add \`agent:go\` to have the coder do it (\`hard\` too for Opus)."
+          fi
