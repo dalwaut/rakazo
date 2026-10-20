@@ -1,0 +1,169 @@
+# repo-bot-kit: the reviewer. Runs the trusted check, then Claude reviews the
+# diff. On a bot PR it closes the loop: pass -> ready-for-merge + ping owner;
+# fix -> dispatch bot-coder for another round (capped); ask -> needs-human.
+# On the owner's own PRs it only comments.
+name: bot-review
+on:
+  pull_request:
+    types: [opened, synchronize, ready_for_review, reopened]
+  workflow_dispatch:
+    inputs:
+      pr:
+        description: PR number to review
+        required: true
+permissions:
+  contents: read
+  pull-requests: write
+  issues: write
+  actions: write
+  id-token: write
+concurrency:
+  group: bot-review-${{ github.event.pull_request.number || inputs.pr }}
+  cancel-in-progress: true
+jobs:
+  review:
+    # never run fork PR code on the self-hosted runner
+    if: github.event_name == 'workflow_dispatch' || github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: [self-hosted, opai-server]
+    timeout-minutes: 45
+    env:
+      GH_TOKEN: ${{ github.token }}
+      DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+      PR: ${{ github.event.pull_request.number || inputs.pr }}
+      OWNER: ${{ github.repository_owner }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Check out the PR head and the trusted bot scripts
+        env:
+          BOT_ENV_VAL: ${{ vars.BOT_ENV }}
+        run: |
+          gfetch() { git -c http.https://github.com/.extraheader="AUTHORIZATION: basic $(printf 'x-access-token:%s' "$GH_TOKEN" | base64 -w0)" fetch -q origin "$@"; }
+          set -euo pipefail
+          BOT="$RUNNER_TEMP/bot"; echo "BOT=$BOT" >> "$GITHUB_ENV"
+          mkdir -p "$BOT"
+          gfetch "+refs/heads/$DEFAULT_BRANCH:refs/remotes/origin/$DEFAULT_BRANCH" "+pull/$PR/head:pr-$PR"
+          for f in context.sh prepare.sh check.sh lint-baseline; do
+            git show "origin/$DEFAULT_BRANCH:.github/bot/$f" > "$BOT/$f" 2>/dev/null \
+              || git show "pr-$PR:.github/bot/$f" > "$BOT/$f"   # bootstrap: kit not on the default branch yet
+          done
+          chmod +x "$BOT"/*.sh
+          git checkout -q "pr-$PR"
+          # review what would land: the PR merged into the default branch
+          if git -c user.name="repo-bot" -c user.email="41898282+github-actions[bot]@users.noreply.github.com" \
+               merge -q --no-edit "origin/$DEFAULT_BRANCH"; then echo "MERGE=clean" >> "$GITHUB_ENV"
+          else git merge --abort; echo "MERGE=conflict" >> "$GITHUB_ENV"; fi
+          printf '%s\n' "$BOT_ENV_VAL" > "$BOT/bot.env"
+          echo "BOT_ENV_FILE=$BOT/bot.env" >> "$GITHUB_ENV"
+          echo "BOT_BASELINE_FILE=$BOT/lint-baseline" >> "$GITHUB_ENV"
+          echo "SHA=$(git rev-parse "pr-$PR")" >> "$GITHUB_ENV"
+          echo ".bot-context.md" >> .git/info/exclude
+          echo ".bot-diff.patch" >> .git/info/exclude
+          echo ".bot-check.log" >> .git/info/exclude
+
+      - uses: actions/setup-node@v4
+        if: hashFiles('package.json') != ''
+        with:
+          node-version: ${{ vars.BOT_NODE_VERSION || '22' }}
+
+      - name: Trusted check
+        run: |
+          # PR-controlled code (npm scripts, build) runs with no GitHub token
+          GH_TOKEN='' "$BOT/prepare.sh"
+          if [ "$MERGE" = conflict ]; then
+            echo "The PR conflicts with $DEFAULT_BRANCH; resolve the conflict first." > .bot-check.log; echo "CHECK=fail" >> "$GITHUB_ENV"
+          elif GH_TOKEN='' "$BOT/check.sh" > .bot-check.log 2>&1; then echo "CHECK=pass" >> "$GITHUB_ENV"; else echo "CHECK=fail" >> "$GITHUB_ENV"; fi
+          tail -n 5 .bot-check.log
+          "$BOT/context.sh" pr "$PR" "$DEFAULT_BRANCH" > .bot-context.md
+          git diff "origin/$DEFAULT_BRANCH...HEAD" -- . ':!package-lock.json' > .bot-diff.patch
+
+      - id: claude
+        uses: anthropics/claude-code-action@v1
+        env:
+          GH_TOKEN: ""
+        with:
+          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          github_token: ${{ github.token }}
+          # review and coder dispatch each other as github-actions; no other bot is allowed
+          allowed_bots: github-actions
+          prompt: |
+            You are the reviewer bot for ${{ github.repository }}, PR #${{ env.PR }}. Read AGENTS.md first.
+            The PR head is checked out. The diff is in `.bot-diff.patch`, the PR/issue context and
+            earlier review rounds in `.bot-context.md`, and the deterministic check result in
+            `.bot-check.log` (result: ${{ env.CHECK }}).
+
+            Review for: correctness against the linked issue, real bugs, security (secrets, auth,
+            Supabase keys beyond the public anon key, injection), broken UX, and needless scope.
+            Do not nitpick style the linter already owns.
+            Severity: blocker (must not ship), major (should fix before merge), minor (optional).
+            Verdict:
+            - "fix" if there is any blocker or major finding, or the check failed.
+            - "ask" if shipping depends on a decision only the owner can make; put ONE question in `question`.
+            - "pass" otherwise. Minor findings may still be listed.
+            Do not re-raise a finding the coder already rebutted with evidence in an earlier round
+            unless the rebuttal is wrong. Be brief. Do not post comments yourself.
+          claude_args: |
+            --model ${{ vars.BOT_REVIEW_MODEL || 'sonnet' }}
+            --max-turns ${{ vars.BOT_REVIEW_MAX_TURNS || '80' }}
+            --allowedTools "Read,Glob,Grep,Bash(git diff:*),Bash(git log:*),Bash(git show:*)"
+            --json-schema '{"type":"object","properties":{"verdict":{"type":"string","enum":["pass","fix","ask"]},"summary":{"type":"string"},"question":{"type":"string"},"findings":{"type":"array","items":{"type":"object","properties":{"severity":{"type":"string","enum":["blocker","major","minor"]},"file":{"type":"string"},"line":{"type":"integer"},"problem":{"type":"string"},"fix":{"type":"string"}},"required":["severity","problem"]}}},"required":["verdict","summary"]}'
+
+      - name: Post the review and route the PR
+        if: "!cancelled()"
+        env:
+          OUT: ${{ steps.claude.outputs.structured_output }}
+          MAX_ROUNDS: ${{ vars.BOT_MAX_ROUNDS || '5' }}
+        run: |
+          set -euo pipefail
+          [ -n "${OUT:-}" ] || OUT='{"verdict":"ask","summary":"The review run ended without a result.","question":"The reviewer failed; check the workflow log and re-run bot-review."}'
+          verdict=$(jq -r .verdict <<<"$OUT")
+          [ "$CHECK" = fail ] && [ "$verdict" = pass ] && verdict=fix
+          rounds=$(gh api "repos/$GITHUB_REPOSITORY/issues/$PR/comments" --paginate --jq '[.[] | select(.body | startswith("<!-- bot-review"))] | length' | awk '{s+=$1} END {print s+0}')
+          round=$((rounds + 1))
+          is_bot=$(gh pr view "$PR" --json labels --jq '[.labels[].name] | index("bot") != null')
+          findings=$(jq -r '(.findings // []) | map("- **\(.severity)** \(if .file then "`\(.file)\(if .line then ":\(.line)" else "" end)` " else "" end)\(.problem)\(if .fix then " → \(.fix)" else "" end)") | join("\n")' <<<"$OUT")
+          checkline=$([ "$CHECK" = pass ] && echo "✅ check passed" || echo "❌ check failed")
+          body="<!-- bot-review round=$round sha=$SHA -->
+          **bot-review** round $round · \`${SHA:0:7}\` · $checkline · **VERDICT: $verdict**
+
+          $(jq -r .summary <<<"$OUT")
+
+          $findings"
+          if [ "$CHECK" = fail ]; then body="$body
+
+          <details><summary>check log (tail)</summary>
+
+          \`\`\`
+          $(tail -n 40 .bot-check.log)
+          \`\`\`
+          </details>"; fi
+
+          if [ "$verdict" = ask ]; then body="$body
+
+          **Question:** $(jq -r '.question // "see review"' <<<"$OUT")"; fi
+          if [ "$is_bot" != true ]; then
+            gh pr comment "$PR" --body "$body"; exit 0
+          fi
+          case "$verdict" in
+            pass)
+              gh pr edit "$PR" --add-label ready-for-merge --remove-label needs-human >/dev/null 2>&1 || gh pr edit "$PR" --add-label ready-for-merge >/dev/null
+              gh pr comment "$PR" --body "$body
+
+          @$OWNER ready to merge. Netlify preview is on the PR checks." ;;
+            ask)
+              gh pr edit "$PR" --add-label needs-human >/dev/null
+              gh pr comment "$PR" --body "$body
+          <!-- bot-question -->
+          @$OWNER Reply with \`@claude <answer>\`." ;;
+            fix)
+              gh pr comment "$PR" --body "$body"
+              if [ "$round" -lt "$MAX_ROUNDS" ]; then
+                gh workflow run bot-coder.yml --ref "$DEFAULT_BRANCH" -f pr="$PR"
+              else
+                gh pr edit "$PR" --add-label bot:stuck --add-label needs-human >/dev/null
+                gh pr comment "$PR" --body "<!-- bot-question --> @$OWNER Stuck after $round review rounds. Take it over, close it, or comment \`@claude <direction>\`."
+              fi ;;
+          esac

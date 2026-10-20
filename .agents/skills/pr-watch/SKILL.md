@@ -3,6 +3,11 @@ name: pr-watch
 description: Take an open pull request to green — wait for CI, triage failing checks, and answer review-bot comments — using one backgrounded observation per cycle. Use when monitoring or babysitting a PR, waiting on checks or review bots, or addressing PR review feedback.
 ---
 
+> Vendored from elie222/rakazo `.agents/skills/pr-watch` (Apache-2.0) by
+> repo-bot-kit. In this repo the review bot is `bot-review`: its comments carry
+> `<!-- bot-review` and a `VERDICT:` line. A `fix` verdict on a bot PR already
+> re-runs the coder; on your own PR, answer it like any review comment.
+
 # Watch a PR to green
 
 Take the PR on the current branch (or the number you were given) to a clean
